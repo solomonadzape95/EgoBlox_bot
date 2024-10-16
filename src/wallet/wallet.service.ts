@@ -105,7 +105,7 @@ export class WalletService {
       network: 'ethereum',
       rpcUrl: `${process.env.RPC_URL}`,
       privateKey,
-      gasPrice: '10', // TODO: increase this for faster transaction
+      //   gasPrice: '10', // TODO: increase this for faster transaction
       tokenAddress: '0x6E2c0695F1EC6eAC90C1C4A8bbaF6dD26651d2D1',
       data: description || '',
     });
@@ -125,7 +125,7 @@ export class WalletService {
       network: 'ethereum',
       rpcUrl: `${process.env.RPC_URL}`,
       privateKey,
-      gasPrice: '10', // TODO: increase this for faster transaction
+      //   gasPrice: '10', // TODO: increase this for faster transaction
       tokenAddress: '0xAE7BD344982bD507D3dcAa828706D558cf281F13',
       data: description || '',
     });

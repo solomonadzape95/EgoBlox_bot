@@ -7,6 +7,7 @@ import { exportWalletWarningMarkup } from './exportWalletWarning';
 import { displayPrivateKeyMarkup } from './displayPrivateKey';
 import { resetWalletWarningMarkup } from './resetWalletWarning';
 import { walletFeaturesMarkup } from './walletFeatures';
+import { transactionReceiptMarkup } from './transactionReceipt';
 
 export {
   welcomeMessageMarkup,
@@ -18,4 +19,5 @@ export {
   displayPrivateKeyMarkup,
   resetWalletWarningMarkup,
   walletFeaturesMarkup,
+  transactionReceiptMarkup,
 };

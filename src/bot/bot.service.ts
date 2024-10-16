@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import * as TelegramBot from 'node-telegram-bot-api';
+import TelegramBot from 'node-telegram-bot-api';
 import {
   welcomeMessageMarkup,
   allFeaturesMarkup,
@@ -9,6 +9,7 @@ import {
   displayPrivateKeyMarkup,
   resetWalletWarningMarkup,
   walletFeaturesMarkup,
+  transactionReceiptMarkup,
 } from './markups';
 import { InjectModel } from '@nestjs/mongoose';
 import { User } from 'src/database/schemas/user.schema';
@@ -22,16 +23,24 @@ import { WalletService } from 'src/wallet/wallet.service';
 import * as bcrypt from 'bcrypt';
 import * as dotenv from 'dotenv';
 import { detectSendToken } from './utils/detectSendToken.utils';
+// import { base, baseSepolia } from 'viem/chains';
 
 dotenv.config();
 
 const token = process.env.TELEGRAM_TOKEN;
+
+//dynamically import coinbaseOnchainkit
+async function loadGetAddressModule(name: string) {
+  const { getAddress } = await import('@coinbase/onchainkit/identity');
+  return getAddress({ name });
+}
 
 @Injectable()
 export class BotService {
   private readonly egoBloxBot: TelegramBot;
   private logger = new Logger(BotService.name);
   private readonly saltRounds = 10;
+  private readonly getAddress = loadGetAddressModule;
 
   constructor(
     private readonly walletService: WalletService,
@@ -60,7 +69,7 @@ export class BotService {
         chat_id: msg.chat.id,
       });
       console.log('session  ', session);
-      if (msg.text !== '/start' && session) {
+      if (msg.text !== '/start') {
         this.handleUserTextInputs(msg, session);
       } else {
         const command = msg.text;
@@ -101,23 +110,27 @@ export class BotService {
   //handler for users inputs
   handleUserTextInputs = async (
     msg: TelegramBot.Message,
-    session: SessionDocument,
+    session?: SessionDocument,
   ) => {
     await this.egoBloxBot.sendChatAction(msg.chat.id, 'typing');
     try {
       const user = await this.UserModel.findOne({ chat_id: msg.chat.id });
-      // update users answerId
-      await this.SessionModel.updateOne(
-        { _id: session._id },
-        { $push: { userInputId: msg.message_id } },
-      );
+      if (session) {
+        // update users answerId
+        await this.SessionModel.updateOne(
+          { _id: session._id },
+          { $push: { userInputId: msg.message_id } },
+        );
+      }
 
       // function to detect 4 digit pin
       function isValidPin(pin) {
         const pinRegex = /^\d{4}$/;
         return pinRegex.test(pin);
       }
+
       const matchedSend = detectSendToken(msg.text.trim());
+      console.log('here', matchedSend);
 
       // parse incoming message and handle commands
       try {
@@ -376,66 +389,230 @@ export class BotService {
               `Processing command failed, Invalid pin`,
             );
           }
+        } // handle send token
+        else if (
+          isValidPin(msg.text.trim()) &&
+          session.walletPinPromptInput &&
+          session.sendToken
+        ) {
+          const pin = msg.text.trim();
+          const user = await this.UserModel.findOne({ chat_id: msg.chat.id });
+          // compare hashed pin
+          const pinMatch = await bcrypt.compare(pin, user.pin);
+          // send Token if pin is correct
+          if (pinMatch) {
+            // DECRYPT WALLET
+            const walletDetail = await this.walletService.decryptWallet(
+              pin,
+              user.walletDetails,
+            );
+            // get the transaction
+            const transaction = await this.TransactionModel.findOne({
+              _id: session.transactionId,
+            });
+            let txn: any;
+            let receipt: any;
+            switch (transaction.token) {
+              case 'ETH':
+                txn = await this.walletService.transferEth(
+                  walletDetail.privateKey,
+                  transaction.receiverAddress,
+                  Number(transaction.amount),
+                );
+                console.log(txn);
+                receipt = await txn.wait();
+                console.log(receipt);
+                //update transaction
+                await this.TransactionModel.updateOne(
+                  { _id: transaction._id },
+                  {
+                    status: receipt.status === 0 ? 'failed' : 'successful',
+                    ownerApproved: true,
+                    hash: receipt.transactionHash,
+                  },
+                );
+
+                await this.sendTransactionReceipt(
+                  msg.chat.id,
+                  receipt,
+                  `Transfer of ${transaction.amount} ${transaction.token} to ${transaction.receiver}`,
+                );
+                break;
+
+              case 'USDC':
+                txn = await this.walletService.transferUSDC(
+                  walletDetail.privateKey,
+                  transaction.receiverAddress,
+                  Number(transaction.amount),
+                );
+                console.log(txn);
+                receipt = await txn.wait();
+                console.log(receipt);
+                //update transaction
+                await this.TransactionModel.updateOne(
+                  { _id: transaction._id },
+                  {
+                    status: receipt.status === 0 ? 'failed' : 'successful',
+                    ownerApproved: true,
+                    hash: receipt.transactionHash,
+                  },
+                );
+
+                await this.sendTransactionReceipt(
+                  msg.chat.id,
+                  receipt,
+                  `Transfer of ${transaction.amount} ${transaction.token} to ${transaction.receiver}`,
+                );
+                break;
+
+              case 'DAI':
+                txn = await this.walletService.transferDAI(
+                  walletDetail.privateKey,
+                  transaction.receiverAddress,
+                  Number(transaction.amount),
+                );
+                console.log(txn);
+                receipt = await txn.wait();
+                console.log(receipt);
+                //update transaction
+                await this.TransactionModel.updateOne(
+                  { _id: transaction._id },
+                  {
+                    status: receipt.status === 0 ? 'failed' : 'successful',
+                    ownerApproved: true,
+                    hash: receipt.transactionHash,
+                  },
+                );
+
+                await this.sendTransactionReceipt(
+                  msg.chat.id,
+                  receipt,
+                  `Transfer of ${transaction.amount} ${transaction.token} to ${transaction.receiver}`,
+                );
+                break;
+
+              default:
+                break;
+            }
+
+            const promises = [];
+            const latestSession = await this.SessionModel.findOne({
+              chat_id: msg.chat.id,
+            });
+            console.log('latest session', latestSession);
+            // loop through pin prompt to delete them
+            for (
+              let i = 0;
+              i < latestSession.walletPinPromptInputId.length;
+              i++
+            ) {
+              try {
+                promises.push(
+                  await this.egoBloxBot.deleteMessage(
+                    msg.chat.id,
+                    latestSession.walletPinPromptInputId[i],
+                  ),
+                );
+              } catch (error) {
+                console.log(error);
+              }
+            }
+            // loop through to delete all userReply
+            for (let i = 0; i < latestSession.userInputId.length; i++) {
+              try {
+                promises.push(
+                  await this.egoBloxBot.deleteMessage(
+                    msg.chat.id,
+                    latestSession.userInputId[i],
+                  ),
+                );
+              } catch (error) {
+                console.log(error);
+              }
+            }
+            // delete all session
+            await this.SessionModel.deleteMany({ chat_id: msg.chat.id });
+          } else {
+            return await this.egoBloxBot.sendMessage(
+              msg.chat.id,
+              `Processing command failed, Invalid pin`,
+            );
+          }
         }
         //handle import wallet private key
         else if (
-          (await this.isPrivateKey(msg.text.trim(), msg.chat.id)) &&
+          session &&
+          session.importWallet &&
           session.importWalletPromptInput
         ) {
-          const privateKey = msg.text.trim();
-          console.log(privateKey);
-          const importedWallet = this.walletService.getAddressFromPrivateKey(
-            `${privateKey}`,
-          );
-          console.log(importedWallet);
-
-          // encrypt wallet details with  default
-          const encryptedWalletDetails = await this.walletService.encryptWallet(
-            process.env.DEFAULT_WALLET_PIN,
-            privateKey,
-          );
-
-          // save  user wallet details
-          await this.UserModel.updateOne(
-            { chat_id: msg.chat.id },
-            {
-              defaultWalletDetails: encryptedWalletDetails.json,
-              walletAddress: importedWallet.address,
-            },
-          );
-
-          const promises = [];
-          const latestSession = await this.SessionModel.findOne({
-            chat_id: msg.chat.id,
-          });
-          // loop through  import privateKey prompt to delete them
-          for (
-            let i = 0;
-            i < latestSession.importWalletPromptInputId.length;
-            i++
-          ) {
-            promises.push(
-              await this.egoBloxBot.deleteMessage(
-                msg.chat.id,
-                latestSession.importWalletPromptInputId[i],
-              ),
+          if (await this.isPrivateKey(msg.text.trim(), msg.chat.id)) {
+            const privateKey = msg.text.trim();
+            console.log(privateKey);
+            const importedWallet = this.walletService.getAddressFromPrivateKey(
+              `${privateKey}`,
             );
-          }
-          // loop through to delete all userReply
-          for (let i = 0; i < latestSession.userInputId.length; i++) {
-            promises.push(
-              await this.egoBloxBot.deleteMessage(
-                msg.chat.id,
-                latestSession.userInputId[i],
-              ),
-            );
-          }
+            console.log(importedWallet);
 
-          await this.sendWalletDetails(msg.chat.id, importedWallet.address);
-          return this.promptWalletPin(msg.chat.id, 'import');
+            // encrypt wallet details with  default
+            const encryptedWalletDetails =
+              await this.walletService.encryptWallet(
+                process.env.DEFAULT_WALLET_PIN,
+                privateKey,
+              );
+
+            // save  user wallet details
+            await this.UserModel.updateOne(
+              { chat_id: msg.chat.id },
+              {
+                defaultWalletDetails: encryptedWalletDetails.json,
+                walletAddress: importedWallet.address,
+              },
+            );
+
+            const promises = [];
+            const latestSession = await this.SessionModel.findOne({
+              chat_id: msg.chat.id,
+            });
+            // loop through  import privateKey prompt to delete them
+            for (
+              let i = 0;
+              i < latestSession.importWalletPromptInputId.length;
+              i++
+            ) {
+              promises.push(
+                await this.egoBloxBot.deleteMessage(
+                  msg.chat.id,
+                  latestSession.importWalletPromptInputId[i],
+                ),
+              );
+            }
+            // loop through to delete all userReply
+            for (let i = 0; i < latestSession.userInputId.length; i++) {
+              promises.push(
+                await this.egoBloxBot.deleteMessage(
+                  msg.chat.id,
+                  latestSession.userInputId[i],
+                ),
+              );
+            }
+
+            await this.sendWalletDetails(msg.chat.id, importedWallet.address);
+            return this.promptWalletPin(msg.chat.id, 'import');
+          }
+          return;
         }
         // detect send action
         else if (matchedSend) {
+          let receiverAddress: string;
+          if (matchedSend.walletType === 'ens') {
+            receiverAddress = await this.getAddress(matchedSend.receiver);
+          } else if (matchedSend.walletType === 'username') {
+            const receiver = await this.UserModel.findOne({
+              username: matchedSend.receiver,
+            });
+            receiverAddress = receiver.walletAddress;
+          } else receiverAddress = matchedSend.receiver;
+
           // save transaction
           const transaction = await this.TransactionModel.create({
             chat_id: msg.chat.id,
@@ -446,9 +623,13 @@ export class BotService {
             type: 'SEND',
             ownerApproved: false,
             receiverType: matchedSend.walletType,
+            receiverAddress,
           });
           if (transaction) {
-            return await this.sendWalletPinPrompt(msg.chat.id, transaction);
+            return await this.sendTokenWalletPinPrompt(
+              msg.chat.id,
+              transaction,
+            );
           }
         }
       } catch (error) {
@@ -695,7 +876,6 @@ export class BotService {
             },
           },
         );
-
         await this.SessionModel.updateOne(
           { chat_id: chatId },
           {
@@ -893,6 +1073,7 @@ export class BotService {
 
   walletPinPrompt = async (chatId: TelegramBot.ChatId) => {
     try {
+      const session = await this.SessionModel.findOne({ chat_id: chatId });
       const walletPinPromptId = await this.egoBloxBot.sendMessage(
         chatId,
         `Please enter your wallet pin`,
@@ -903,20 +1084,27 @@ export class BotService {
         },
       );
       if (walletPinPromptId) {
-        await this.SessionModel.updateOne(
-          { chat_id: chatId },
-          {
-            walletPinPromptInput: true,
-            $push: { walletPinPromptInputId: walletPinPromptId.message_id },
-          },
-        );
+        if (session) {
+          await this.SessionModel.updateOne(
+            { chat_id: chatId },
+            {
+              walletPinPromptInput: true,
+              $push: { walletPinPromptInputId: walletPinPromptId.message_id },
+            },
+          );
+        }
+        await this.SessionModel.create({
+          chat_id: chatId,
+          walletPinPromptInput: true,
+          walletPinPromptInputId: [walletPinPromptId.message_id],
+        });
       }
     } catch (error) {
       console.log(error);
     }
   };
 
-  sendWalletPinPrompt = async (
+  sendTokenWalletPinPrompt = async (
     chatId: TelegramBot.ChatId,
     transaction?: TransactionDocument,
   ) => {
@@ -959,7 +1147,7 @@ export class BotService {
         );
       }
 
-      const sendwalletPinPromptId = await this.egoBloxBot.sendMessage(
+      const sendTokenWalletPinPromptId = await this.egoBloxBot.sendMessage(
         chatId,
         `Please enter your wallet pin`,
         {
@@ -968,17 +1156,16 @@ export class BotService {
           },
         },
       );
-      if (sendwalletPinPromptId) {
+      if (sendTokenWalletPinPromptId) {
         await this.SessionModel.deleteMany({ chat_id: chatId });
 
-        await this.SessionModel.create(
-          { chat_id: chatId },
-          {
-            sendToken: true,
-            walletPinPromptInput: true,
-            walletPinPromptInputId: [sendwalletPinPromptId.message_id],
-          },
-        );
+        await this.SessionModel.create({
+          chat_id: chatId,
+          sendToken: true,
+          walletPinPromptInput: true,
+          walletPinPromptInputId: [sendTokenWalletPinPromptId.message_id],
+          transactionId: transaction._id,
+        });
       }
     } catch (error) {
       console.log(error);
@@ -1005,16 +1192,41 @@ export class BotService {
     }
   };
 
+  sendTransactionReceipt = async (
+    chatId: any,
+    transactionReceipt: any,
+    description?: any,
+  ) => {
+    try {
+      const receipt = await transactionReceiptMarkup(
+        transactionReceipt,
+        description,
+      );
+      if (receipt) {
+        const replyMarkup = {
+          inline_keyboard: receipt.keyboard,
+        };
+        await this.egoBloxBot.sendMessage(chatId, receipt.message, {
+          parse_mode: 'HTML',
+          reply_markup: replyMarkup,
+        });
+      }
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
   // utitlity functions
   isPrivateKey = async (input: string, chatId: number): Promise<boolean> => {
     const latestSession = await this.SessionModel.findOne({ chat_id: chatId });
     const trimmedInput = input.trim();
     const privateKeyRegex = /^0x[a-fA-F0-9]{64}$/;
-
     if (privateKeyRegex.test(trimmedInput)) {
       return true;
-    } else if (latestSession.importWalletPromptInput) {
-      this.egoBloxBot.sendMessage(chatId, 'Invalid Private KEY');
+    } else if (latestSession) {
+      if (latestSession.importWallet) {
+        this.egoBloxBot.sendMessage(chatId, 'Invalid Private KEY');
+      }
 
       const promises = [];
       // loop through  import privateKey prompt to delete them

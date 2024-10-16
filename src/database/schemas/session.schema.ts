@@ -55,6 +55,9 @@ export class Session {
 
   @Prop()
   userInputId: number[];
+
+  @Prop()
+  transactionId: string;
 }
 
 export const SessionSchema = SchemaFactory.createForClass(Session);

@@ -33,13 +33,13 @@ export class Transaction {
   receiverType: string;
 
   @Prop()
+  receiverAddress: string;
+
+  @Prop()
   sender: string;
 
   @Prop({ type: mongoose.Schema.Types.BigInt, ref: 'User' })
   chat_id: bigint;
-
-  @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true })
-  user: mongoose.Types.ObjectId;
 }
 
 export const TransactionSchema = SchemaFactory.createForClass(Transaction);

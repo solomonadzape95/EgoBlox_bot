@@ -29,6 +29,7 @@
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
+    "@coinbase/onchainkit": "^0.34.0",
     "@nestjs/common": "^10.0.0",
     "@nestjs/core": "^10.0.0",
     "@nestjs/mongoose": "^10.0.10",
@@ -38,7 +39,8 @@
     "multichain-crypto-wallet": "^0.2.8",
     "node-telegram-bot-api": "^0.66.0",
     "reflect-metadata": "^0.2.0",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "viem-chains": "^1.0.2"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.0.0",
