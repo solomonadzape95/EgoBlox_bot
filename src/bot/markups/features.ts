@@ -4,34 +4,16 @@ export const allFeaturesMarkup = async () => {
     keyboard: [
       [
         {
-          text: 'Create wallet 💳',
+          text: 'Wallet 💳',
           callback_data: JSON.stringify({
-            command: '/createWallet',
+            command: '/walletFeatures',
             language: 'english',
           }),
         },
-      ],
-      [
         {
-          text: 'Import wallet 🔗',
-          callback_data: JSON.stringify({
-            command: '/linkWallet',
-            language: 'english',
-          }),
-        },
-      ],
-      [
-        {
-          text: 'Pay bills 💡',
+          text: 'Bills 💡',
           callback_data: JSON.stringify({
             command: '/bills',
-            language: 'english',
-          }),
-        },
-        {
-          text: 'Send token 💸',
-          callback_data: JSON.stringify({
-            command: '/sendToken',
             language: 'english',
           }),
         },
@@ -44,9 +26,9 @@ export const allFeaturesMarkup = async () => {
           },
         },
         {
-          text: 'Fund wallet 💵',
+          text: 'Send token 💸',
           callback_data: JSON.stringify({
-            command: '/fundWallet',
+            command: '/sendToken',
             language: 'english',
           }),
         },

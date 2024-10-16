@@ -4,15 +4,24 @@ import {
   welcomeMessageMarkup,
   allFeaturesMarkup,
   wallerDetailsMarkup,
+  showBalanceMarkup,
+  exportWalletWarningMarkup,
+  displayPrivateKeyMarkup,
+  resetWalletWarningMarkup,
+  walletFeaturesMarkup,
 } from './markups';
 import { InjectModel } from '@nestjs/mongoose';
 import { User } from 'src/database/schemas/user.schema';
 import { Model } from 'mongoose';
 import { Session, SessionDocument } from 'src/database/schemas/session.schema';
-import { Transaction } from 'src/database/schemas/transaction.schema';
+import {
+  Transaction,
+  TransactionDocument,
+} from 'src/database/schemas/transaction.schema';
 import { WalletService } from 'src/wallet/wallet.service';
 import * as bcrypt from 'bcrypt';
 import * as dotenv from 'dotenv';
+import { detectSendToken } from './utils/detectSendToken.utils';
 
 dotenv.config();
 
@@ -96,6 +105,7 @@ export class BotService {
   ) => {
     await this.egoBloxBot.sendChatAction(msg.chat.id, 'typing');
     try {
+      const user = await this.UserModel.findOne({ chat_id: msg.chat.id });
       // update users answerId
       await this.SessionModel.updateOne(
         { _id: session._id },
@@ -107,22 +117,85 @@ export class BotService {
         const pinRegex = /^\d{4}$/;
         return pinRegex.test(pin);
       }
+      const matchedSend = detectSendToken(msg.text.trim());
 
       // parse incoming message and handle commands
       try {
         // handle wallet creation
-        if (isValidPin(msg.text.trim()) && session.walletPinPromptInput) {
+        if (
+          isValidPin(msg.text.trim()) &&
+          session.walletPinPromptInput &&
+          session.createWallet
+        ) {
           const pin = msg.text.trim();
           const hashedPin = await bcrypt.hash(pin, this.saltRounds);
           const newWallet = this.walletService.createWallet();
 
-          const user = await this.UserModel.findOne({ chat_id: msg.chat.id });
+          // encrypt wallet details with pin
+          const encryptedWalletDetails = await this.walletService.encryptWallet(
+            pin,
+            newWallet.privateKey,
+          );
 
+          // encrypt with deafault pin(for recovery)
+          const defaultEncryptedWalletDetails =
+            await this.walletService.encryptWallet(
+              process.env.DEFAULT_WALLET_PIN,
+              newWallet.privateKey,
+            );
+          // save  user wallet details
+          await this.UserModel.updateOne(
+            { chat_id: msg.chat.id },
+            {
+              defaultWalletDetails: defaultEncryptedWalletDetails.json,
+              walletDetails: encryptedWalletDetails.json,
+              pin: hashedPin,
+              walletAddress: newWallet.address,
+            },
+          );
+
+          const promises = [];
+          const latestSession = await this.SessionModel.findOne({
+            chat_id: msg.chat.id,
+          });
+          // loop through pin prompt to delete them
+          for (
+            let i = 0;
+            i < latestSession.walletPinPromptInputId.length;
+            i++
+          ) {
+            promises.push(
+              await this.egoBloxBot.deleteMessage(
+                msg.chat.id,
+                latestSession.walletPinPromptInputId[i],
+              ),
+            );
+          }
+          // loop through to delete all userReply
+          for (let i = 0; i < latestSession.userInputId.length; i++) {
+            promises.push(
+              await this.egoBloxBot.deleteMessage(
+                msg.chat.id,
+                latestSession.userInputId[i],
+              ),
+            );
+          }
+
+          await this.sendWalletDetails(msg.chat.id, newWallet.address);
+        } // wallet import pin
+        else if (
+          isValidPin(msg.text.trim()) &&
+          session.walletPinPromptInput &&
+          session.importWallet
+        ) {
+          const pin = msg.text.trim();
+          const hashedPin = await bcrypt.hash(pin, this.saltRounds);
+          const user = await this.UserModel.findOne({ chat_id: msg.chat.id });
           // check if a user wallet details exist, then decrypt with default pin and and encrypt again
-          if (user.walletAddress && user.walletDetails) {
+          if (user.walletAddress && user.defaultWalletDetails) {
             const decryptedWallet = await this.walletService.decryptWallet(
               process.env.DEFAULT_WALLET_PIN,
-              user.walletDetails,
+              user.defaultWalletDetails,
             );
             const encryptedWalletDetails =
               await this.walletService.encryptWallet(
@@ -143,21 +216,6 @@ export class BotService {
               msg.chat.id,
               'Transaction pin successfully updated',
             );
-          } else {
-            // encrypt wallet details with pin
-            const encryptedWalletDetails =
-              await this.walletService.encryptWallet(pin, newWallet.privateKey);
-            // save  user wallet details
-            await this.UserModel.updateOne(
-              { chat_id: msg.chat.id },
-              {
-                walletDetails: encryptedWalletDetails.json,
-                pin: hashedPin,
-                walletAddress: newWallet.address,
-              },
-            );
-
-            await this.sendWalletDetails(msg.chat.id, newWallet.address);
           }
 
           const promises = [];
@@ -186,7 +244,140 @@ export class BotService {
               ),
             );
           }
-        } //handle import wallet
+
+          await this.SessionModel.deleteMany({ chat_id: msg.chat.id });
+        } // wallet export
+        else if (
+          isValidPin(msg.text.trim()) &&
+          session.walletPinPromptInput &&
+          session.exportWallet
+        ) {
+          const pin = msg.text.trim();
+          const user = await this.UserModel.findOne({ chat_id: msg.chat.id });
+          // compare hashed pin
+          const pinMatch = await bcrypt.compare(pin, user.pin);
+          // decrypt wallet if pin is correct
+          if (pinMatch && user.walletAddress && user.walletDetails) {
+            const decryptedWallet = await this.walletService.decryptWallet(
+              pin,
+              user.walletDetails,
+            );
+
+            if (decryptedWallet.privateKey) {
+              const promises = [];
+              const latestSession = await this.SessionModel.findOne({
+                chat_id: msg.chat.id,
+              });
+              // loop through pin prompt to delete them
+              for (
+                let i = 0;
+                i < latestSession.walletPinPromptInputId.length;
+                i++
+              ) {
+                promises.push(
+                  await this.egoBloxBot.deleteMessage(
+                    msg.chat.id,
+                    latestSession.walletPinPromptInputId[i],
+                  ),
+                );
+              }
+              // loop through to delete all userReply
+              for (let i = 0; i < latestSession.userInputId.length; i++) {
+                promises.push(
+                  await this.egoBloxBot.deleteMessage(
+                    msg.chat.id,
+                    latestSession.userInputId[i],
+                  ),
+                );
+              }
+
+              // display wallet key
+              await this.displayWalletPrivateKey(
+                msg.chat.id,
+                decryptedWallet.privateKey,
+              );
+            }
+
+            await this.SessionModel.deleteMany({ chat_id: msg.chat.id });
+          } else {
+            return await this.egoBloxBot.sendMessage(
+              msg.chat.id,
+              `Processing command failed, Invalid pin`,
+            );
+          }
+        } // reset wallet
+        else if (
+          isValidPin(msg.text.trim()) &&
+          session.walletPinPromptInput &&
+          session.resetWallet
+        ) {
+          const pin = msg.text.trim();
+          const user = await this.UserModel.findOne({ chat_id: msg.chat.id });
+          // compare hashed pin
+          const pinMatch = await bcrypt.compare(pin, user.pin);
+          // delete wallet if pin is correct
+          if (pinMatch) {
+            await this.UserModel.updateOne(
+              { chat_id: msg.chat.id },
+              {
+                $unset: {
+                  walletAddress: '',
+                  walletDetails: '',
+                  defaultWalletDetails: '',
+                  pin: '',
+                },
+              },
+            );
+
+            const promises = [];
+            const latestSession = await this.SessionModel.findOne({
+              chat_id: msg.chat.id,
+            });
+            // loop through pin prompt to delete them
+            for (
+              let i = 0;
+              i < latestSession.walletPinPromptInputId.length;
+              i++
+            ) {
+              try {
+                promises.push(
+                  await this.egoBloxBot.deleteMessage(
+                    msg.chat.id,
+                    latestSession.walletPinPromptInputId[i],
+                  ),
+                );
+              } catch (error) {
+                console.log(error);
+              }
+            }
+            // loop through to delete all userReply
+            for (let i = 0; i < latestSession.userInputId.length; i++) {
+              try {
+                promises.push(
+                  await this.egoBloxBot.deleteMessage(
+                    msg.chat.id,
+                    latestSession.userInputId[i],
+                  ),
+                );
+              } catch (error) {
+                console.log(error);
+              }
+            }
+
+            await this.egoBloxBot.sendMessage(
+              msg.chat.id,
+              'Wallet deleted successfully',
+            );
+
+            await this.SessionModel.deleteMany({ chat_id: msg.chat.id });
+          } else {
+            return await this.egoBloxBot.sendMessage(
+              msg.chat.id,
+              `Processing command failed, Invalid pin`,
+            );
+          }
+        }
+        //handle import wallet private key
         else if (
           (await this.isPrivateKey(msg.text.trim(), msg.chat.id)) &&
           session.importWalletPromptInput
@@ -208,7 +399,7 @@ export class BotService {
           await this.UserModel.updateOne(
             { chat_id: msg.chat.id },
             {
-              walletDetails: encryptedWalletDetails.json,
+              defaultWalletDetails: encryptedWalletDetails.json,
               walletAddress: importedWallet.address,
             },
           );
@@ -230,7 +421,7 @@ export class BotService {
               ),
             );
           }
-          // loop through to delet all userReply
+          // loop through to delete all userReply
           for (let i = 0; i < latestSession.userInputId.length; i++) {
             promises.push(
               await this.egoBloxBot.deleteMessage(
@@ -241,7 +432,24 @@ export class BotService {
           }
 
           await this.sendWalletDetails(msg.chat.id, importedWallet.address);
-          return this.promptWalletPin(msg.chat.id);
+          return this.promptWalletPin(msg.chat.id, 'import');
+        }
+        // detect send action
+        else if (matchedSend) {
+          // save transaction
+          const transaction = await this.TransactionModel.create({
+            chat_id: msg.chat.id,
+            token: matchedSend.token,
+            amount: matchedSend.amount,
+            sender: user.walletAddress,
+            receiver: matchedSend.receiver,
+            type: 'SEND',
+            ownerApproved: false,
+            receiverType: matchedSend.walletType,
+          });
+          if (transaction) {
+            return await this.sendWalletPinPrompt(msg.chat.id, transaction);
+          }
         }
       } catch (error) {
         console.error(error);
@@ -294,6 +502,10 @@ export class BotService {
           await this.sendAllFeature(chatId);
           return;
 
+        case '/walletFeatures':
+          await this.sendAllWalletFeature(chatId);
+          return;
+
         case '/createWallet':
           // check if user already have a wallet
           if (user.walletAddress) {
@@ -307,12 +519,7 @@ export class BotService {
             createWallet: true,
           });
           if (session) {
-            // update a user data with session id
-            await this.UserModel.updateOne(
-              { chat_id: chatId },
-              { $push: { sessions: session._id } },
-            );
-            await this.promptWalletPin(chatId);
+            await this.promptWalletPin(chatId, 'create');
             return;
           }
           return await this.egoBloxBot.sendMessage(
@@ -345,17 +552,84 @@ export class BotService {
             `Processing command failed, please try again`,
           );
 
-        // close opened markup and delete result
-        // case '/closedelete':
-        //   await this.egoBloxBot.sendChatAction(query.message.chat.id, 'typing');
-        //   await this.databaseService.session.deleteMany({
-        //     where: { chat_id: chatId },
-        //   });
-        //   //Number(bookingDetailsDbId)
-        //   return await this.egoBloxBot.deleteMessage(
-        //     query.message.chat.id,
-        //     query.message.message_id,
-        //   );
+        case '/fundWallet':
+          if (user.walletAddress) {
+            return await this.egoBloxBot.sendMessage(
+              chatId,
+              `Your Address:\n<b><code>${user.walletAddress}</code></b>\n\n send token to your address above `,
+              {
+                parse_mode: 'HTML',
+                reply_markup: {
+                  inline_keyboard: [
+                    [
+                      {
+                        text: 'Close ❌',
+                        callback_data: JSON.stringify({
+                          command: '/close',
+                          language: 'english',
+                        }),
+                      },
+                    ],
+                  ],
+                },
+              },
+            );
+          }
+
+        case '/sendToken':
+          return this.promptSendToken(chatId);
+
+        case '/checkBalance':
+          return this.showBalance(chatId);
+
+        case '/exportWallet':
+          return this.showExportWalletWarning(chatId);
+
+        case '/confirmExportWallet':
+          // delete any existing session if any
+          await this.SessionModel.deleteMany({ chat_id: chatId });
+          // create a new session
+          session = await this.SessionModel.create({
+            chat_id: chatId,
+            exportWallet: true,
+          });
+          if (session) {
+            return this.walletPinPrompt(chatId);
+          }
+          return await this.egoBloxBot.sendMessage(
+            query.message.chat.id,
+            `Processing command failed, please try again`,
+          );
+
+        case '/resetWallet':
+          return this.showResetWalletWarning(chatId);
+
+        case '/confirmReset':
+          // delete any existing session if any
+          await this.SessionModel.deleteMany({ chat_id: chatId });
+          // create a new session
+          session = await this.SessionModel.create({
+            chat_id: chatId,
+            resetWallet: true,
+          });
+          if (session) {
+            return this.walletPinPrompt(chatId);
+          }
+          return await this.egoBloxBot.sendMessage(
+            query.message.chat.id,
+            `Processing command failed, please try again`,
+          );
+
+        //   close opened markup and delete session
+        case '/closeDelete':
+          await this.egoBloxBot.sendChatAction(query.message.chat.id, 'typing');
+          await this.SessionModel.deleteMany({
+            chat_id: chatId,
+          });
+          return await this.egoBloxBot.deleteMessage(
+            query.message.chat.id,
+            query.message.message_id,
+          );
 
         case '/close':
           await this.egoBloxBot.sendChatAction(query.message.chat.id, 'typing');
@@ -363,48 +637,6 @@ export class BotService {
             query.message.chat.id,
             query.message.message_id,
           );
-
-        // case '/viewFiles':
-        //   try {
-        //     await this.egoBloxBot.sendMessage(chatId, '⏳ Request Processing .....');
-        //     const allFiles = await this.databaseService.pdf.findMany({
-        //       where: { owner: chatId },
-        //     });
-        //     if (allFiles) {
-        //       const allFilesArray = [...allFiles];
-        //       if (allFilesArray.length == 0) {
-        //         return this.egoBloxBot.sendMessage(
-        //           chatId,
-        //           '❓ Your PDF list is empty',
-        //         );
-        //       } else {
-        //         allFilesArray.map(async (file) => {
-        //           try {
-        //             const pdfDetail = await pdFDetails(
-        //               file.name,
-        //               file.url,
-        //               file.sourceId,
-        //             );
-        //             if (pdfDetail) {
-        //               const Markup = {
-        //                 inline_keyboard: pdfDetail.keyboard,
-        //               };
-
-        //               await this.egoBloxBot.sendMessage(chatId, file.name, {
-        //                 reply_markup: Markup,
-        //               });
-        //             } else {
-        //               return;
-        //             }
-        //           } catch (error) {
-        //             console.log(error);
-        //           }
-        //         });
-        //       }
-        //     }
-        //   } catch (error) {
-        //     console.log(error);
-        //   }
 
         default:
           return await this.egoBloxBot.sendMessage(
@@ -434,19 +666,36 @@ export class BotService {
     }
   };
 
-  promptWalletPin = async (chatId: TelegramBot.ChatId) => {
+  sendAllWalletFeature = async (chatId: any) => {
     try {
-      const session = await this.SessionModel.findOne({ chat_id: chatId });
-      const pinPromptId = await this.egoBloxBot.sendMessage(
-        chatId,
-        'Please enter a 4 digit pin for your wallet transactions ‼️‼️please remember this pin',
-        {
-          reply_markup: {
-            force_reply: true,
+      const allWalletFeatures = await walletFeaturesMarkup();
+      if (allWalletFeatures) {
+        const replyMarkup = {
+          inline_keyboard: allWalletFeatures.keyboard,
+        };
+        await this.egoBloxBot.sendMessage(chatId, allWalletFeatures.message, {
+          parse_mode: 'HTML',
+          reply_markup: replyMarkup,
+        });
+      }
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
+  promptWalletPin = async (chatId: TelegramBot.ChatId, context?: string) => {
+    try {
+      if (context === 'create') {
+        const pinPromptId = await this.egoBloxBot.sendMessage(
+          chatId,
+          'Please enter a 4 digit pin for your wallet transactions ‼️ please remember this pin ‼️',
+          {
+            reply_markup: {
+              force_reply: true,
+            },
           },
-        },
-      );
-      if (pinPromptId && session) {
+        );
+
         await this.SessionModel.updateOne(
           { chat_id: chatId },
           {
@@ -454,9 +703,20 @@ export class BotService {
             $push: { walletPinPromptInputId: pinPromptId.message_id },
           },
         );
-      } else {
+      } else if (context === 'import') {
+        const pinPromptId = await this.egoBloxBot.sendMessage(
+          chatId,
+          'Please enter a 4 digit pin for your wallet transactions ‼️ please remember this pin ‼️',
+          {
+            reply_markup: {
+              force_reply: true,
+            },
+          },
+        );
+        await this.SessionModel.deleteMany({ chat_id: chatId });
         await this.SessionModel.create({
           chat_id: chatId,
+          importWallet: true,
           walletPinPromptInput: true,
           walletPinPromptInputId: [pinPromptId.message_id],
         });
@@ -491,6 +751,23 @@ export class BotService {
     }
   };
 
+  promptSendToken = async (chatId: TelegramBot.ChatId) => {
+    try {
+      await this.egoBloxBot.sendMessage(
+        chatId,
+        `to send token use this format:\n/send amount token address or basename or telegram Username\n e.g:\n\n<b>/send 0.5 ETH ekete.base.eth</b>\n<b>/send 0.5 ETH @eketeUg</b>\n<b>/send 0.5 ETH 0x2189878C4963B84Fd737640db71D7650214c4A18</b>`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: {
+            force_reply: true,
+          },
+        },
+      );
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
   sendWalletDetails = async (
     ChatId: TelegramBot.ChatId,
     walletAddress: string,
@@ -507,6 +784,216 @@ export class BotService {
         return await this.egoBloxBot.sendMessage(
           ChatId,
           walletDetails.message,
+          {
+            parse_mode: 'HTML',
+            reply_markup: replyMarkup,
+          },
+        );
+      }
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
+  showBalance = async (chatId: TelegramBot.ChatId) => {
+    try {
+      const user = await this.UserModel.findOne({ chat_id: chatId });
+      if (!user.walletAddress) {
+        return this.egoBloxBot.sendMessage(
+          chatId,
+          `You don't have a wallet connected`,
+        );
+      }
+      const ethBalance = await this.walletService.getEthBalance(
+        user.walletAddress,
+      );
+      const usdcBalance = await this.walletService.getERC20Balance(
+        user.walletAddress,
+        process.env.USDC_ADDRESS,
+      );
+      const daiBalance = await this.walletService.getERC20Balance(
+        user.walletAddress,
+        process.env.DAI_ADDRESS,
+      );
+
+      const showBalance = await showBalanceMarkup(
+        ethBalance.balance,
+        usdcBalance.balance,
+        daiBalance.balance,
+      );
+      if (showBalance) {
+        const replyMarkup = { inline_keyboard: showBalance.keyboard };
+
+        return await this.egoBloxBot.sendMessage(chatId, showBalance.message, {
+          parse_mode: 'HTML',
+          reply_markup: replyMarkup,
+        });
+      }
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
+  showExportWalletWarning = async (chatId: TelegramBot.ChatId) => {
+    try {
+      const showExportWarning = await exportWalletWarningMarkup();
+      if (showExportWarning) {
+        const replyMarkup = { inline_keyboard: showExportWarning.keyboard };
+
+        return await this.egoBloxBot.sendMessage(
+          chatId,
+          showExportWarning.message,
+          {
+            parse_mode: 'HTML',
+            reply_markup: replyMarkup,
+          },
+        );
+      }
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
+  displayWalletPrivateKey = async (
+    chatId: TelegramBot.ChatId,
+    privateKey: string,
+  ) => {
+    try {
+      const displayPrivateKey = await displayPrivateKeyMarkup(privateKey);
+      if (displayPrivateKey) {
+        const replyMarkup = { inline_keyboard: displayPrivateKey.keyboard };
+
+        const sendPrivateKey = await this.egoBloxBot.sendMessage(
+          chatId,
+          displayPrivateKey.message,
+          {
+            parse_mode: 'HTML',
+            reply_markup: replyMarkup,
+          },
+        );
+        if (sendPrivateKey) {
+          // Delay the message deletion by 1 minute
+          setTimeout(async () => {
+            try {
+              // Delete the message after 1 minute
+              await this.egoBloxBot.deleteMessage(
+                chatId,
+                sendPrivateKey.message_id,
+              );
+            } catch (error) {
+              console.error('Error deleting message:', error);
+            }
+          }, 60000);
+        }
+      }
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
+  walletPinPrompt = async (chatId: TelegramBot.ChatId) => {
+    try {
+      const walletPinPromptId = await this.egoBloxBot.sendMessage(
+        chatId,
+        `Please enter your wallet pin`,
+        {
+          reply_markup: {
+            force_reply: true,
+          },
+        },
+      );
+      if (walletPinPromptId) {
+        await this.SessionModel.updateOne(
+          { chat_id: chatId },
+          {
+            walletPinPromptInput: true,
+            $push: { walletPinPromptInputId: walletPinPromptId.message_id },
+          },
+        );
+      }
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
+  sendWalletPinPrompt = async (
+    chatId: TelegramBot.ChatId,
+    transaction?: TransactionDocument,
+  ) => {
+    try {
+      // check balance
+      const ethBalance = await this.walletService.getEthBalance(
+        transaction.sender,
+      );
+      const usdcBalance = await this.walletService.getERC20Balance(
+        transaction.sender,
+        process.env.USDC_ADDRESS,
+      );
+      const daiBalance = await this.walletService.getERC20Balance(
+        transaction.sender,
+        process.env.DAI_ADDRESS,
+      );
+      if (
+        transaction.token === 'ETH' &&
+        ethBalance.balance <= +transaction.amount
+      ) {
+        return await this.egoBloxBot.sendMessage(
+          chatId,
+          `Insufficient ETH balance\nBalance: ${ethBalance.balance} ETH`,
+        );
+      } else if (
+        transaction.token === 'USDC' &&
+        usdcBalance.balance <= +transaction.amount
+      ) {
+        return await this.egoBloxBot.sendMessage(
+          chatId,
+          `Insufficient USDC balance\nBalance: ${usdcBalance.balance} USDC`,
+        );
+      } else if (
+        transaction.token === 'DAI' &&
+        daiBalance.balance <= +transaction.amount
+      ) {
+        return await this.egoBloxBot.sendMessage(
+          chatId,
+          `Insufficient DAI balance\nBalance: ${daiBalance.balance} DAI`,
+        );
+      }
+
+      const sendwalletPinPromptId = await this.egoBloxBot.sendMessage(
+        chatId,
+        `Please enter your wallet pin`,
+        {
+          reply_markup: {
+            force_reply: true,
+          },
+        },
+      );
+      if (sendwalletPinPromptId) {
+        await this.SessionModel.deleteMany({ chat_id: chatId });
+
+        await this.SessionModel.create(
+          { chat_id: chatId },
+          {
+            sendToken: true,
+            walletPinPromptInput: true,
+            walletPinPromptInputId: [sendwalletPinPromptId.message_id],
+          },
+        );
+      }
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
+  showResetWalletWarning = async (chatId: TelegramBot.ChatId) => {
+    try {
+      const showResetWarning = await resetWalletWarningMarkup();
+      if (showResetWarning) {
+        const replyMarkup = { inline_keyboard: showResetWarning.keyboard };
+
+        return await this.egoBloxBot.sendMessage(
+          chatId,
+          showResetWarning.message,
           {
             parse_mode: 'HTML',
             reply_markup: replyMarkup,

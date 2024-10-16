@@ -33,6 +33,12 @@ export class Session {
   importWallet: boolean;
 
   @Prop({ default: false })
+  exportWallet: boolean;
+
+  @Prop({ default: false })
+  resetWallet: boolean;
+
+  @Prop({ default: false })
   changeWalletPin: boolean;
 
   @Prop({ default: false })

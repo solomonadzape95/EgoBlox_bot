@@ -21,6 +21,9 @@ export class User {
   walletDetails: string;
 
   @Prop()
+  defaultWalletDetails: string;
+
+  @Prop()
   pin: string;
 
   @Prop()

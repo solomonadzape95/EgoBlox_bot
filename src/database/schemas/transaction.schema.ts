@@ -17,6 +17,24 @@ export class Transaction {
   @Prop()
   description: string;
 
+  @Prop()
+  ownerApproved: boolean;
+
+  @Prop()
+  token: string;
+
+  @Prop()
+  amount: string;
+
+  @Prop()
+  receiver: string;
+
+  @Prop()
+  receiverType: string;
+
+  @Prop()
+  sender: string;
+
   @Prop({ type: mongoose.Schema.Types.BigInt, ref: 'User' })
   chat_id: bigint;
 
