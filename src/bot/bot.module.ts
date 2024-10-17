@@ -9,9 +9,11 @@ import {
 } from 'src/database/schemas/transaction.schema';
 import { Session, SessionSchema } from 'src/database/schemas/session.schema';
 import { WalletModule } from 'src/wallet/wallet.module';
+import { BillsModule } from 'src/bills/bills.module';
 
 @Module({
   imports: [
+    BillsModule,
     WalletModule,
     DatabaseModule,
     MongooseModule.forFeature([{ name: User.name, schema: UserSchema }]),

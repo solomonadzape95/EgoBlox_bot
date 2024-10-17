@@ -23,6 +23,8 @@ import { WalletService } from 'src/wallet/wallet.service';
 import * as bcrypt from 'bcrypt';
 import * as dotenv from 'dotenv';
 import { detectSendToken } from './utils/detectSendToken.utils';
+import { detectAirtime } from './utils/detectAirtime.utils';
+import { BillsService } from 'src/bills/bills.service';
 // import { base, baseSepolia } from 'viem/chains';
 
 dotenv.config();
@@ -44,6 +46,7 @@ export class BotService {
 
   constructor(
     private readonly walletService: WalletService,
+    private readonly billsService: BillsService,
     @InjectModel(User.name) private readonly UserModel: Model<User>,
     @InjectModel(Session.name) private readonly SessionModel: Model<Session>,
     @InjectModel(Transaction.name)
@@ -129,9 +132,13 @@ export class BotService {
         return pinRegex.test(pin);
       }
 
+      // detect send token command
       const matchedSend = detectSendToken(msg.text.trim());
-      console.log('here', matchedSend);
+      console.log('sned', matchedSend);
 
+      // detect buy airtime command
+      const matchBuyAirtime = detectAirtime(msg.text.trim());
+      console.log('airtime', matchBuyAirtime);
       // parse incoming message and handle commands
       try {
         // handle wallet creation
@@ -539,6 +546,216 @@ export class BotService {
             );
           }
         }
+        // handle buy airtime
+        else if (
+          isValidPin(msg.text.trim()) &&
+          session.walletPinPromptInput &&
+          session.airtime
+        ) {
+          const pin = msg.text.trim();
+          const user = await this.UserModel.findOne({ chat_id: msg.chat.id });
+          // compare hashed pin
+          const pinMatch = await bcrypt.compare(pin, user.pin);
+          // send Token if pin is correct
+          if (pinMatch) {
+            // DECRYPT WALLET
+            const walletDetail = await this.walletService.decryptWallet(
+              pin,
+              user.walletDetails,
+            );
+            // get the transaction
+            const transaction = await this.TransactionModel.findOne({
+              _id: session.transactionId,
+            });
+            let txn: any;
+            let receipt: any;
+            switch (transaction.token) {
+              case 'ETH':
+                txn = await this.walletService.transferEth(
+                  walletDetail.privateKey,
+                  process.env.ADMIN_WALLET,
+                  Number(transaction.amount),
+                );
+                console.log(txn);
+                receipt = await txn.wait();
+                console.log(receipt);
+                if (receipt.status == 1) {
+                  // buy airtime
+                  const airtime = await this.billsService.buyAirtime(
+                    `${transaction.airtimeDataNumber}`,
+                    `${transaction.airtimeAmount}`,
+                  );
+                  if (airtime) {
+                    //update transaction
+                    await this.TransactionModel.updateOne(
+                      { _id: transaction._id },
+                      {
+                        flutterWave_status: airtime.status,
+                        flutterWave_reference: airtime.data.reference,
+                        flutterWave_tx_ref: airtime.data.tx_ref,
+                        flutterWave_bill_Network: airtime.data.network,
+                      },
+                    );
+                  }
+                }
+
+                //update transaction
+                await this.TransactionModel.updateOne(
+                  { _id: transaction._id },
+                  {
+                    status: receipt.status === 0 ? 'failed' : 'successful',
+                    ownerApproved: true,
+                    hash: receipt.transactionHash,
+                  },
+                );
+
+                await this.sendTransactionReceipt(
+                  msg.chat.id,
+                  receipt,
+                  `₦${transaction.airtimeAmount} Airtime purchase for ${transaction.airtimeDataNumber} `,
+                );
+                break;
+
+              case 'USDC':
+                txn = await this.walletService.transferUSDC(
+                  walletDetail.privateKey,
+                  process.env.ADMIN_WALLET,
+                  Number(transaction.amount),
+                );
+                console.log(txn);
+                receipt = await txn.wait();
+                console.log(receipt);
+                if (receipt.status == 1) {
+                  // buy airtime
+                  const airtime = await this.billsService.buyAirtime(
+                    `${transaction.airtimeDataNumber}`,
+                    `${transaction.airtimeAmount}`,
+                  );
+                  if (airtime) {
+                    //update transaction
+                    await this.TransactionModel.updateOne(
+                      { _id: transaction._id },
+                      {
+                        flutterWave_status: airtime.status,
+                        flutterWave_reference: airtime.data.reference,
+                        flutterWave_tx_ref: airtime.data.tx_ref,
+                        flutterWave_bill_Network: airtime.data.network,
+                      },
+                    );
+                  }
+                }
+
+                //update transaction
+                await this.TransactionModel.updateOne(
+                  { _id: transaction._id },
+                  {
+                    status: receipt.status === 0 ? 'failed' : 'successful',
+                    ownerApproved: true,
+                    hash: receipt.transactionHash,
+                  },
+                );
+
+                await this.sendTransactionReceipt(
+                  msg.chat.id,
+                  receipt,
+                  `₦${transaction.airtimeAmount} Airtime purchase for ${transaction.airtimeDataNumber} `,
+                );
+                break;
+
+              case 'DAI':
+                txn = await this.walletService.transferDAI(
+                  walletDetail.privateKey,
+                  process.env.ADMIN_WALLET,
+                  Number(transaction.amount),
+                );
+                console.log(txn);
+                receipt = await txn.wait();
+                console.log(receipt);
+                if (receipt.status == 1) {
+                  // buy airtime
+                  const airtime = await this.billsService.buyAirtime(
+                    `${transaction.airtimeDataNumber}`,
+                    `${transaction.airtimeAmount}`,
+                  );
+                  if (airtime) {
+                    //update transaction
+                    await this.TransactionModel.updateOne(
+                      { _id: transaction._id },
+                      {
+                        flutterWave_status: airtime.status,
+                        flutterWave_reference: airtime.data.reference,
+                        flutterWave_tx_ref: airtime.data.tx_ref,
+                        flutterWave_bill_Network: airtime.data.network,
+                      },
+                    );
+                  }
+                }
+
+                //update transaction
+                await this.TransactionModel.updateOne(
+                  { _id: transaction._id },
+                  {
+                    status: receipt.status === 0 ? 'failed' : 'successful',
+                    ownerApproved: true,
+                    hash: receipt.transactionHash,
+                  },
+                );
+
+                await this.sendTransactionReceipt(
+                  msg.chat.id,
+                  receipt,
+                  `₦${transaction.airtimeAmount} Airtime purchase for ${transaction.airtimeDataNumber} `,
+                );
+                break;
+
+              default:
+                break;
+            }
+
+            const promises = [];
+            const latestSession = await this.SessionModel.findOne({
+              chat_id: msg.chat.id,
+            });
+            console.log('latest session', latestSession);
+            // loop through pin prompt to delete them
+            for (
+              let i = 0;
+              i < latestSession.walletPinPromptInputId.length;
+              i++
+            ) {
+              try {
+                promises.push(
+                  await this.egoBloxBot.deleteMessage(
+                    msg.chat.id,
+                    latestSession.walletPinPromptInputId[i],
+                  ),
+                );
+              } catch (error) {
+                console.log(error);
+              }
+            }
+            // loop through to delete all userReply
+            for (let i = 0; i < latestSession.userInputId.length; i++) {
+              try {
+                promises.push(
+                  await this.egoBloxBot.deleteMessage(
+                    msg.chat.id,
+                    latestSession.userInputId[i],
+                  ),
+                );
+              } catch (error) {
+                console.log(error);
+              }
+            }
+            // delete all session
+            await this.SessionModel.deleteMany({ chat_id: msg.chat.id });
+          } else {
+            return await this.egoBloxBot.sendMessage(
+              msg.chat.id,
+              `Processing command failed, Invalid pin`,
+            );
+          }
+        }
         //handle import wallet private key
         else if (
           session &&
@@ -627,6 +844,45 @@ export class BotService {
           });
           if (transaction) {
             return await this.sendTokenWalletPinPrompt(
+              msg.chat.id,
+              transaction,
+            );
+          }
+        }
+        // detect buy airtime action
+        else if (matchBuyAirtime) {
+          const rateAmount = (() => {
+            const { token, amount } = matchBuyAirtime;
+            const rates = {
+              ETH: process.env.ETH_RATE!,
+              USDC: process.env.USDC_RATE!,
+              DAI: process.env.DAI_RATE!,
+            };
+
+            if (token === 'ETH') {
+              return (Number(amount) / Number(rates.ETH)).toFixed(18);
+            } else if (token === 'USDC') {
+              return (Number(amount) / Number(rates.USDC)).toFixed(6);
+            } else if (token === 'DAI') {
+              return (Number(amount) / Number(rates.DAI)).toFixed(6);
+            }
+
+            return null; // Handle the case where token is not ETH, USDC, or DAI
+          })();
+
+          // save transaction
+          const transaction = await this.TransactionModel.create({
+            chat_id: msg.chat.id,
+            token: matchBuyAirtime.token,
+            airtimeAmount: matchBuyAirtime.amount,
+            amount: rateAmount,
+            sender: user.walletAddress,
+            airtimeDataNumber: matchBuyAirtime.phoneNumber,
+            type: 'AIRTIME',
+            ownerApproved: false,
+          });
+          if (transaction) {
+            return await this.buyAirtimeWalletPinPrompt(
               msg.chat.id,
               transaction,
             );
@@ -759,6 +1015,9 @@ export class BotService {
 
         case '/sendToken':
           return this.promptSendToken(chatId);
+
+        case '/airtime':
+          return this.promptBuyAirtime(chatId);
 
         case '/checkBalance':
           return this.showBalance(chatId);
@@ -935,7 +1194,24 @@ export class BotService {
     try {
       await this.egoBloxBot.sendMessage(
         chatId,
-        `to send token use this format:\n/send amount token address or basename or telegram Username\n e.g:\n\n<b>/send 0.5 ETH ekete.base.eth</b>\n<b>/send 0.5 ETH @eketeUg</b>\n<b>/send 0.5 ETH 0x2189878C4963B84Fd737640db71D7650214c4A18</b>`,
+        `to send token use this format:\n/send amount token address or basename or telegram Username\n e.g:\n\n/send 0.5 ETH ekete.base.eth\n/send 0.5 ETH @eketeUg\n/send 0.5 ETH 0x2189878C4963B84Fd737640db71D7650214c4A18`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: {
+            force_reply: true,
+          },
+        },
+      );
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
+  promptBuyAirtime = async (chatId: TelegramBot.ChatId) => {
+    try {
+      await this.egoBloxBot.sendMessage(
+        chatId,
+        `to buy airtime use this format:\n/airtime amount phone_number token(token you want to use and buy the airtime)\n e.g:\n\n/airtime 100 07064350087 ETH`,
         {
           parse_mode: 'HTML',
           reply_markup: {
@@ -1164,6 +1440,74 @@ export class BotService {
           sendToken: true,
           walletPinPromptInput: true,
           walletPinPromptInputId: [sendTokenWalletPinPromptId.message_id],
+          transactionId: transaction._id,
+        });
+      }
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
+  buyAirtimeWalletPinPrompt = async (
+    chatId: TelegramBot.ChatId,
+    transaction?: TransactionDocument,
+  ) => {
+    try {
+      // check balance
+      const ethBalance = await this.walletService.getEthBalance(
+        transaction.sender,
+      );
+      const usdcBalance = await this.walletService.getERC20Balance(
+        transaction.sender,
+        process.env.USDC_ADDRESS,
+      );
+      const daiBalance = await this.walletService.getERC20Balance(
+        transaction.sender,
+        process.env.DAI_ADDRESS,
+      );
+      if (
+        transaction.token === 'ETH' &&
+        ethBalance.balance <= +transaction.amount
+      ) {
+        return await this.egoBloxBot.sendMessage(
+          chatId,
+          `Insufficient ETH balance\nBalance: ${ethBalance.balance} ETH\n\nAirtime amount: ${transaction.airtimeAmount}\nETH amount: ${transaction.amount} ETH`,
+        );
+      } else if (
+        transaction.token === 'USDC' &&
+        usdcBalance.balance <= +transaction.amount
+      ) {
+        return await this.egoBloxBot.sendMessage(
+          chatId,
+          `Insufficient USDC balance\nBalance: ${usdcBalance.balance} USDC\n\nAirtime amount: ${transaction.airtimeAmount}\nUSDC amount: ${transaction.amount} USDC`,
+        );
+      } else if (
+        transaction.token === 'DAI' &&
+        daiBalance.balance <= +transaction.amount
+      ) {
+        return await this.egoBloxBot.sendMessage(
+          chatId,
+          `Insufficient DAI balance\nBalance: ${daiBalance.balance} DAI\n\nAirtime amount: ${transaction.airtimeAmount}\nDAI amount: ${transaction.amount} DAI`,
+        );
+      }
+
+      const buyAirtimWalletPinPromptId = await this.egoBloxBot.sendMessage(
+        chatId,
+        `Please enter your wallet pin`,
+        {
+          reply_markup: {
+            force_reply: true,
+          },
+        },
+      );
+      if (buyAirtimWalletPinPromptId) {
+        await this.SessionModel.deleteMany({ chat_id: chatId });
+
+        await this.SessionModel.create({
+          chat_id: chatId,
+          airtime: true,
+          walletPinPromptInput: true,
+          walletPinPromptInputId: [buyAirtimWalletPinPromptId.message_id],
           transactionId: transaction._id,
         });
       }

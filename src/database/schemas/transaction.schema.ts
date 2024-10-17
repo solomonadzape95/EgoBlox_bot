@@ -18,7 +18,25 @@ export class Transaction {
   description: string;
 
   @Prop()
+  flutterWave_tx_ref: string;
+
+  @Prop()
+  flutterWave_reference: string;
+
+  @Prop()
+  flutterWave_status: string;
+
+  @Prop()
+  flutterWave_bill_Network: string;
+
+  @Prop()
   ownerApproved: boolean;
+
+  @Prop()
+  airtimeDataNumber: string;
+
+  @Prop()
+  airtimeAmount: string;
 
   @Prop()
   token: string;
