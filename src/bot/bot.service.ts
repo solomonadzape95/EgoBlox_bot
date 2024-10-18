@@ -587,6 +587,8 @@ export class BotService {
                   );
                   if (airtime) {
                     //update transaction
+
+                    console.log('paid airtime', airtime);
                     await this.TransactionModel.updateOne(
                       { _id: transaction._id },
                       {

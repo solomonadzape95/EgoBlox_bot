@@ -89,7 +89,7 @@ export class BillsService {
               },
             );
             console.log(gloAirtime.data);
-            return gloAirtime.data.status;
+            return gloAirtime.data;
           } catch (error) {
             console.log(error);
             break;
@@ -107,7 +107,7 @@ export class BillsService {
               },
             );
             console.log(airtelAirtime.data);
-            return airtelAirtime.data.status;
+            return airtelAirtime.data;
           } catch (error) {
             console.log(error);
             break;
@@ -125,7 +125,7 @@ export class BillsService {
               },
             );
             console.log(etisalatAirtime.data);
-            return etisalatAirtime.data.status;
+            return etisalatAirtime.data;
           } catch (error) {
             console.log(error);
             break;
@@ -139,4 +139,95 @@ export class BillsService {
       console.log(error);
     }
   }
+
+  //   async payElectricity(meterNo: string, amount: string, disco: string) {
+  //     try {
+  //       const carrier = getCarrier(phoneNumber);
+  //       const payLoad = {
+  //         country: 'NG',
+  //         customer_id: `${phoneNumber}`,
+  //         amount: Number(amount),
+  //       };
+  //       console.log(carrier);
+  //       switch (carrier) {
+  //         case 'MTN NIGERIA':
+  //           try {
+  //             const mtnAirtime = await this.httpService.axiosRef.post(
+  //               `https://api.flutterwave.com/v3/billers/BIL099/items/AT099/payment`,
+  //               payLoad,
+  //               {
+  //                 headers: {
+  //                   Authorization: process.env.FLUTTERWAVE_SECRET,
+  //                 },
+  //               },
+  //             );
+  //             console.log(mtnAirtime.data);
+  //             return mtnAirtime.data;
+  //           } catch (error) {
+  //             console.log(error);
+  //             break;
+  //           }
+
+  //         case 'GLO NIGERIA':
+  //           try {
+  //             const gloAirtime = await this.httpService.axiosRef.post(
+  //               `https://api.flutterwave.com/v3/billers/BIL102/items/AT102/payment`,
+  //               payLoad,
+  //               {
+  //                 headers: {
+  //                   Authorization: process.env.FLUTTERWAVE_SECRET,
+  //                 },
+  //               },
+  //             );
+  //             console.log(gloAirtime.data);
+  //             return gloAirtime.data.status;
+  //           } catch (error) {
+  //             console.log(error);
+  //             break;
+  //           }
+
+  //         case 'AIRTEL NIGERIA':
+  //           try {
+  //             const airtelAirtime = await this.httpService.axiosRef.post(
+  //               `https://api.flutterwave.com/v3/billers/BIL100/items/AT100/payment`,
+  //               payLoad,
+  //               {
+  //                 headers: {
+  //                   Authorization: process.env.FLUTTERWAVE_SECRET,
+  //                 },
+  //               },
+  //             );
+  //             console.log(airtelAirtime.data);
+  //             return airtelAirtime.data.status;
+  //           } catch (error) {
+  //             console.log(error);
+  //             break;
+  //           }
+
+  //         case '9MOBILE NIGERIA':
+  //           try {
+  //             const etisalatAirtime = await this.httpService.axiosRef.post(
+  //               `https://api.flutterwave.com/v3/billers/BIL103/items/AT103/payment`,
+  //               payLoad,
+  //               {
+  //                 headers: {
+  //                   Authorization: process.env.FLUTTERWAVE_SECRET,
+  //                 },
+  //               },
+  //             );
+  //             console.log(etisalatAirtime.data);
+  //             return etisalatAirtime.data.status;
+  //           } catch (error) {
+  //             console.log(error);
+  //             break;
+  //           }
+
+  //         default:
+  //           console.log('nothing');
+  //           break;
+  //       }
+  //     } catch (error) {
+  //       console.log(error);
+  //     }
+  //   }
 }
