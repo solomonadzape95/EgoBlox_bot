@@ -1,51 +1,52 @@
-Here’s a comprehensive README based on the information you’ve provided about your Telegram bot project:
+# EgoBlox
 
-Telegram Utility Bot
+EgoBlox is a Telegram bot and USSD application that allows people to buy airtime, data, pay bills, and send tokens using Base names, Telegram usernames, and wallet addresses.
 
-Overview
+## Overview
 
-This project is a Telegram bot built on the Base network, designed to bring real utility to the onchain economy. The bot enables users to seamlessly purchase airtime, data, electricity, and pay utility bills directly from Telegram. Additionally, it allows users to send tokens using Base names and Telegram usernames, simplifying the crypto transfer process.
+### Inspiration:
 
-Features
+The project was inspired by the need to make blockchain technology more accessible and useful in regions like Nigeria, where ISP bans and VPN restrictions block access to smart wallets. Additionally, there’s a gap in enabling seamless, onchain transactions for essential services like airtime, data, and utility bill payments, making it difficult for people to leverage crypto for daily needs. We set out to solve these challenges with a solution that brings real-world use cases to the onchain economy.
 
-    •	Utility Payments: Users can buy airtime, data, electricity, and other utility bills directly within the Telegram app.
-    •	Token Transfers: Easily send tokens to other users using simple identifiers like Base names and Telegram usernames.
-    •	Smart Accounts: Implementation of smart accounts that streamline gas payments, allowing for gasless transactions.
-    •	Bypassing Restrictions: Overcomes ISP bans and VPN issues that typically block access to smart wallets, ensuring accessibility for users in regions like Nigeria.
+### What it Does:
 
-Motivation
+- Enables users to buy airtime, data, and pay utility bills directly through a Telegram bot.
+- Allows seamless token transfers using Base names, Telegram usernames, or wallet addresses.
+- Implements smart accounts for gasless transactions, bypassing ISP bans and VPN restrictions that typically block access to smart wallets.
+- Provides a user-friendly, onchain solution for essential daily services, making blockchain technology accessible to everyone.
 
-The motivation behind this project stems from a deep connection to the challenges faced by communities in Nigeria, where access to essential services and financial inclusion can be limited. By building utility-driven dApps that integrate blockchain technology into everyday life, we aim to empower users to leverage crypto for practical needs.
+## Tech Stack
 
-Challenges Addressed
+- **Blockchain**: Base network
+- **Backend**: Node.js, TypeScript
+- **Smart Contracts**: Solidity
+- **Database**: MongoDB
+- **Telegram API**: For bot functionality
 
-    •	ISP Bans and VPN Restrictions: The project addresses challenges posed by ISP restrictions that block access to smart wallets, particularly in Nigeria.
-    •	User Adoption and Education: Building educational materials and organizing community workshops to encourage adoption and demonstrate the bot’s functionality.
+## Key Features
 
-Technical Hurdles
+- **Utility Payments**: Buy airtime, data, and pay for electricity and other bills.
+- **Token Transfers**: Send tokens easily via Base names, Telegram usernames, or wallet addresses.
+- **Smart Accounts**: Implemented for gasless transactions, overcoming ISP bans and VPN issues.
 
-Integration with the Base Network
+## Challenges Overcome
 
-    •	Challenge: Understanding the intricacies of the Base network and integrating it with the Telegram bot.
-    •	Solution: Extensive study of the Base network’s documentation and engagement with the developer community for support.
+- **Smart Wallet Restrictions**: Bypassed ISP and VPN restrictions by abstracting smart wallets into smart accounts.
+- **Gas Payments**: Enabled seamless gasless transactions for users with our Paymaster integration.
 
-Implementing Paymaster Functionality
+## What's Next?
 
-    •	Challenge: Adapting the Paymaster feature, originally designed for smart wallets, to work with smart accounts.
-    •	Solution: In-depth research and the development of an abstract form of smart accounts that mimic smart wallet functionality, allowing users to enjoy gasless transactions.
+- Expand utility services to other countries.
+- Integrate more tokens and cross-chain capabilities.
+- Build crypto off-ramping options.
 
-Non-Technical Hurdles
+## Demo
 
-Navigating User Needs
+- [Mainnet Bot](https://t.me/egoblox_bot)
+- [Testnet Bot](https://t.me/egoBlox_testnetBot)
+- [Video Demo](https://youtu.be/7R_5Zohxhjs)
 
-    •	Challenge: Convincing users to adopt blockchain technology in their daily transactions.
-    •	Solution: Creating educational materials and conducting community workshops to build confidence and engagement.
+### Transaction Hashes on Base:
 
-Conclusion
-
-This Telegram bot project aims to make blockchain technology accessible and useful for everyday tasks while empowering users to seamlessly access essential services. By addressing both technical and non-technical challenges, we are committed to driving adoption of blockchain technology in underserved markets and enhancing user experiences in the onchain economy.
-
-Future Work
-
-    •	Continual improvements to the bot’s features based on user feedback.
-    •	Expanding educational initiatives to reach more users and enhance understanding of blockchain technology.
+- [Transaction 1](https://sepolia.basescan.org/tx/0xa874a98bb63d3584c4238c96050173700a4f15d2e44fed2927ac123b619ecfab)
+- [Transaction 2](https://sepolia.basescan.org/tx/0x8c679583db3b7ba0e0d811d8cb7932ca565f4092e7676c6c37cc4545091789e0)
