@@ -3,9 +3,9 @@
 // async function main() {
 //   const service = new ContractInteractionService();
 
-//   const privateKey = // Replace with your private key
+//   //   const privateKey = // Replace with your private key
 //   try {
-//     // console.log(await service.executeEthTransferTransaction(privateKey));
+//     console.log(await service.checkBalance());
 //   } catch (error) {
 //     console.error('Error executing transaction:', error);
 //   }

@@ -13,7 +13,7 @@ dotenv.config();
 
 const RPC_URL = process.env.PAYMASTER_RPC_URL;
 
-const EGOBLOX_ADDRESS = process.env.EGOBLOX_ADDRESS;
+const EGOBLOX_ADDRESS = process.env.EGOBLOX_ADDRESS_TESTNET;
 
 const publicClient = createPublicClient({
   chain: baseSepolia,
@@ -81,11 +81,18 @@ export class ContractInteractionService {
           this.estimateGas(userOperation, bundlerClient),
       };
 
+      // // Step 5: Sign and send the transaction
+      // const userOpHash = await bundlerClient.sendUserOperation({
+      //   account: userAccount,
+      //   calls: [ethTransferCall], // Using ETH transfer call instead of ERC-20 function
+      //   paymaster: true, // Paymaster logic (optional)
+      // });
+
       // Step 5: Sign and send the transaction
       const userOpHash = await bundlerClient.sendUserOperation({
         account: userAccount,
         calls: [ethTransferCall], // Using ETH transfer call instead of ERC-20 function
-        paymaster: true, // Paymaster logic (optional)
+        paymaster: true,
       });
 
       // Step 6: Wait for the transaction receipt
@@ -113,13 +120,19 @@ export class ContractInteractionService {
       console.log('this is address:', userAccount.address);
       const bundlerClient = await this.getBundlerClient(privateKey);
 
-      const transferCall: any = {
+      const erc20transferCall: any = {
         abi: erc20Abi,
         functionName: 'transfer',
         to: tokenAddress,
         args: [receiver, amount * 10 ** decimals],
       };
 
+      // const erc20transferCall: any = {
+      //   abi: egoBloxAbi,
+      //   functionName: 'transferERC20',
+      //   to: EGOBLOX_ADDRESS,
+      //   args: [tokenAddress, receiver, amount * 10 ** decimals],
+      // };
       userAccount.userOperation = {
         estimateGas: (userOperation) =>
           this.estimateGas(userOperation, bundlerClient),
@@ -128,7 +141,7 @@ export class ContractInteractionService {
       // Sign and send the UserOperation
       const userOpHash = await bundlerClient.sendUserOperation({
         account: userAccount,
-        calls: [transferCall],
+        calls: [erc20transferCall],
         paymaster: true,
       });
 

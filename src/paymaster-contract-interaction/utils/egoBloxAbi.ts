@@ -1,42 +1,21 @@
 export const egoBloxAbi = [
+  { type: 'receive', stateMutability: 'payable' },
   {
-    inputs: [
-      {
-        internalType: 'contract IERC20',
-        name: '_token',
-        type: 'address',
-      },
-      {
-        internalType: 'address',
-        name: '_to',
-        type: 'address',
-      },
-      {
-        internalType: 'uint256',
-        name: '_amount',
-        type: 'uint256',
-      },
-    ],
+    type: 'function',
     name: 'transferERC20',
+    inputs: [
+      { name: '_token', type: 'address', internalType: 'contract IERC20' },
+      { name: '_to', type: 'address', internalType: 'address' },
+      { name: '_amount', type: 'uint256', internalType: 'uint256' },
+    ],
     outputs: [],
     stateMutability: 'nonpayable',
-    type: 'function',
   },
   {
-    inputs: [
-      {
-        internalType: 'address payable',
-        name: '_to',
-        type: 'address',
-      },
-    ],
+    type: 'function',
     name: 'transferETH',
+    inputs: [{ name: '_to', type: 'address', internalType: 'address payable' }],
     outputs: [],
     stateMutability: 'payable',
-    type: 'function',
-  },
-  {
-    stateMutability: 'payable',
-    type: 'receive',
   },
 ];

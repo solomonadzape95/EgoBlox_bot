@@ -46,6 +46,11 @@ The project was inspired by the need to make blockchain technology more accessib
 - [Testnet Bot](https://t.me/egoBlox_testnetBot)
 - [Video Demo](https://youtu.be/7R_5Zohxhjs)
 
+### Contract on Base:
+
+- [Base Mainnet](https://basescan.org/address/0xf2763132f7afed98b66ddbb15af07e5369fe9583)
+- [Sepolia Testnet](https://sepolia.basescan.org/address/0x775b280937a08026bda6d2baa95f0451c152cb50)
+
 ### Transaction Hashes on Base:
 
 - [Transaction 1](https://sepolia.basescan.org/tx/0xa874a98bb63d3584c4238c96050173700a4f15d2e44fed2927ac123b619ecfab)

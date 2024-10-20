@@ -1527,6 +1527,12 @@ export class BotService {
         case '/airtime':
           return this.promptBuyAirtime(chatId);
 
+        case '/data':
+          return this.egoBloxBot.sendMessage(chatId, 'COMING SOON ⏳');
+
+        case '/light':
+          return this.egoBloxBot.sendMessage(chatId, 'COMING SOON ⏳');
+
         case '/checkBalance':
           return this.showBalance(chatId);
 
