@@ -1008,7 +1008,7 @@ export class BotService {
                   msg.chat.id,
                   'Sorry This bonus has been exhausted',
                 );
-              } else if (Number(amount) > 100) {
+              } else if (+amount > 100) {
                 // to make sure they can ONLY BUY 100 airtime with testnet
                 return await this.egoBloxBot.sendMessage(
                   msg.chat.id,
@@ -1044,7 +1044,7 @@ export class BotService {
             chat_id: msg.chat.id,
             token: matchBuyAirtime.token,
             airtimeAmount: matchBuyAirtime.amount,
-            amount: rateAmount,
+            amount: await rateAmount,
             sender:
               user?.WalletType === 'SMART'
                 ? user?.smartWalletAddress
