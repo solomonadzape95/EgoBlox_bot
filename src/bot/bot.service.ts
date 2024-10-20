@@ -996,24 +996,32 @@ export class BotService {
         // detect buy airtime action
         else if (matchBuyAirtime) {
           await this.egoBloxBot.sendChatAction(msg.chat.id, 'typing');
-          const rateAmount = (() => {
+          const rateAmount = (async () => {
             const { token, amount } = matchBuyAirtime;
 
-            // to make sure they can ONLY BUY 100 airtime with testnet
-            if (process.env.ENVIRONMENT === 'TESTNET' && Number(amount) > 100) {
-              return this.egoBloxBot.sendMessage(
-                msg.chat.id,
-                'You can only buy 100 worth of airtime once using testnet token',
-              );
-            } else if (
-              process.env.ENVIRONMENT === 'TESTNET' &&
-              user!.testnetAirtimeBonus
-            ) {
-              return this.egoBloxBot.sendMessage(
-                msg.chat.id,
-                'You can only buy 100 worth of airtime once using testnet token\n you have exhausted you onetime purchase',
-              );
+            if (process.env.ENVIRONMENT === 'TESTNET') {
+              const bonusUsers = await this.UserModel.find({
+                testnetAirtimeBonus: true,
+              });
+              if (bonusUsers.length >= 50) {
+                return await this.egoBloxBot.sendMessage(
+                  msg.chat.id,
+                  'Sorry This bonus has been exhausted',
+                );
+              } else if (Number(amount) > 100) {
+                // to make sure they can ONLY BUY 100 airtime with testnet
+                return await this.egoBloxBot.sendMessage(
+                  msg.chat.id,
+                  'You can only buy 100 worth of airtime once using testnet token',
+                );
+              } else if (user!.testnetAirtimeBonus) {
+                return await this.egoBloxBot.sendMessage(
+                  msg.chat.id,
+                  'You can only buy 100 worth of airtime once using testnet token\n you have exhausted you onetime purchase',
+                );
+              }
             }
+
             const rates = {
               ETH: process.env.ETH_RATE!,
               USDC: process.env.USDC_RATE!,
