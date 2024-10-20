@@ -741,6 +741,13 @@ export class BotService {
                       flutterWave_bill_Network: airtime.data.network,
                     },
                   );
+
+                  if (process.env.ENVIRONMENT === 'TESTNET') {
+                    await this.UserModel.updateOne(
+                      { chat_id: msg.chat.id },
+                      { testnetAirtimeBonus: true },
+                    );
+                  }
                   console.log('Airtime purchased:', airtime);
                 }
                 await this.TransactionModel.updateOne(
@@ -991,6 +998,22 @@ export class BotService {
           await this.egoBloxBot.sendChatAction(msg.chat.id, 'typing');
           const rateAmount = (() => {
             const { token, amount } = matchBuyAirtime;
+
+            // to make sure they can ONLY BUY 100 airtime with testnet
+            if (process.env.ENVIRONMENT === 'TESTNET' && Number(amount) > 100) {
+              return this.egoBloxBot.sendMessage(
+                msg.chat.id,
+                'You can only buy 100 worth of airtime once using testnet token',
+              );
+            } else if (
+              process.env.ENVIRONMENT === 'TESTNET' &&
+              user!.testnetAirtimeBonus
+            ) {
+              return this.egoBloxBot.sendMessage(
+                msg.chat.id,
+                'You can only buy 100 worth of airtime once using testnet token\n you have exhausted you onetime purchase',
+              );
+            }
             const rates = {
               ETH: process.env.ETH_RATE!,
               USDC: process.env.USDC_RATE!,
@@ -1508,6 +1531,18 @@ export class BotService {
   promptBuyAirtime = async (chatId: TelegramBot.ChatId) => {
     try {
       await this.egoBloxBot.sendChatAction(chatId, 'typing');
+      if (process.env.ENVIRONMENT === 'TESTNET') {
+        await this.egoBloxBot.sendMessage(
+          chatId,
+          `to buy airtime use this format:\n/airtime amount phone_number token(token you want to use and buy the airtime)\nNOTE: this is testnet you can only buy 100 worth of airtime once with any testnet token\n e.g:\n\n/airtime 100 07064350087 ETH`,
+          {
+            parse_mode: 'HTML',
+            reply_markup: {
+              force_reply: true,
+            },
+          },
+        );
+      }
       await this.egoBloxBot.sendMessage(
         chatId,
         `to buy airtime use this format:\n/airtime amount phone_number token(token you want to use and buy the airtime)\n e.g:\n\n/airtime 100 07064350087 ETH`,

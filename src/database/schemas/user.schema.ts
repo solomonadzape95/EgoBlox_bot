@@ -32,6 +32,9 @@ export class User {
   @Prop()
   pin: string;
 
+  @Prop({ default: false })
+  testnetAirtimeBonus: boolean;
+
   @Prop()
   phoneNumber: string;
 }
