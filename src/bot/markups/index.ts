@@ -1,6 +1,5 @@
 import { allFeaturesMarkup } from './features';
 import { welcomeMessageMarkup } from './welcome';
-import { eventDetails_en } from './createEvent';
 import { wallerDetailsMarkup } from './walletDetails';
 import { showBalanceMarkup } from './showBalance';
 import { exportWalletWarningMarkup } from './exportWalletWarning';
@@ -8,11 +7,12 @@ import { displayPrivateKeyMarkup } from './displayPrivateKey';
 import { resetWalletWarningMarkup } from './resetWalletWarning';
 import { walletFeaturesMarkup } from './walletFeatures';
 import { transactionReceiptMarkup } from './transactionReceipt';
+import { showBillsMarkup } from './bills';
+import { selectWalletTypeMarkup } from './selectWalletType';
 
 export {
   welcomeMessageMarkup,
   allFeaturesMarkup,
-  eventDetails_en,
   wallerDetailsMarkup,
   showBalanceMarkup,
   exportWalletWarningMarkup,
@@ -20,4 +20,6 @@ export {
   resetWalletWarningMarkup,
   walletFeaturesMarkup,
   transactionReceiptMarkup,
+  showBillsMarkup,
+  selectWalletTypeMarkup,
 };

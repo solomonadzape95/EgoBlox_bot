@@ -14,6 +14,12 @@ export class User {
   @Prop()
   baseName: string;
 
+  @Prop({ enum: ['SMART', 'NORMAL'] })
+  WalletType: string;
+
+  @Prop()
+  smartWalletAddress: string;
+
   @Prop()
   walletAddress: string;
 

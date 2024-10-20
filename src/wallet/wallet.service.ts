@@ -106,7 +106,7 @@ export class WalletService {
       rpcUrl: `${process.env.RPC_URL}`,
       privateKey,
       //   gasPrice: '10', // TODO: increase this for faster transaction
-      tokenAddress: '0x6E2c0695F1EC6eAC90C1C4A8bbaF6dD26651d2D1',
+      tokenAddress: process.env.USDC_ADDRESS,
       data: description || '',
     });
 
@@ -126,7 +126,7 @@ export class WalletService {
       rpcUrl: `${process.env.RPC_URL}`,
       privateKey,
       //   gasPrice: '10', // TODO: increase this for faster transaction
-      tokenAddress: '0xAE7BD344982bD507D3dcAa828706D558cf281F13',
+      tokenAddress: process.env.DAI_ADDRESS,
       data: description || '',
     });
 

@@ -30,6 +30,9 @@ export class Session {
   createWallet: boolean;
 
   @Prop({ default: false })
+  createSmartWallet: boolean;
+
+  @Prop({ default: false })
   importWallet: boolean;
 
   @Prop({ default: false })

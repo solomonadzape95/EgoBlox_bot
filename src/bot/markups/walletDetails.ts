@@ -1,6 +1,6 @@
-export const wallerDetailsMarkup = async (address: any) => {
+export const wallerDetailsMarkup = async (address: any, type?: string) => {
   return {
-    message: `<b>Your Wallet:</b>\n\n<b>Address:</b> <code>${address}</code>\n\n Tap to copy the address and send Eth, USDC or any token on base to deposit.`,
+    message: `<b>${type === 'SMART' ? 'Your SMART Wallet:' : 'Your Wallet:'}</b>\n\n<b>Address:</b> <code>${address}</code>\n\n Tap to copy the address and send Eth, USDC or any token on base to deposit.`,
     keyboard: [
       [
         {
