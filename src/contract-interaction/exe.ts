@@ -4,12 +4,16 @@ async function main() {
   const service = new ContractInteractionService();
 
   const privateKey =
-    '0xc8bebec368589697647d2de7745a37f5047ce0bc1825fe6ac160c48e7c403154'; // Replace with your private key
+    '0x4af0d34f7152213dcc1e478239f1960b8580287cfe8904ff5344872113c9af13'; // Replace with your private key
   try {
-    await service.executeMintTransaction(privateKey);
+    console.log(await service.executeEthTransferTransaction(privateKey));
   } catch (error) {
     console.error('Error executing transaction:', error);
   }
 }
 
 main();
+
+//this is address: 0x254152680D520d3BBFDA92B88682Ea3F2d616201
+
+//0xce5333e65ee7da869d48bb9ee2a2dc1892a917b0;

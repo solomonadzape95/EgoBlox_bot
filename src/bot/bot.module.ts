@@ -10,11 +10,13 @@ import {
 import { Session, SessionSchema } from 'src/database/schemas/session.schema';
 import { WalletModule } from 'src/wallet/wallet.module';
 import { BillsModule } from 'src/bills/bills.module';
+import { ContractInteractionModule } from 'src/contract-interaction/contract-interaction.module';
 
 @Module({
   imports: [
     BillsModule,
     WalletModule,
+    ContractInteractionModule,
     DatabaseModule,
     MongooseModule.forFeature([{ name: User.name, schema: UserSchema }]),
     MongooseModule.forFeature([
