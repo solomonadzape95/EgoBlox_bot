@@ -11,9 +11,15 @@ import { privateKeyToAccount } from 'viem/accounts';
 import * as dotenv from 'dotenv';
 dotenv.config();
 
-const RPC_URL = process.env.PAYMASTER_RPC_URL;
+const RPC_URL =
+  process.env.ENVIRONMENT === 'TESTNET'
+    ? process.env.PAYMASTER_RPC_URL_TESTNET
+    : process.env.PAYMASTER_RPC_URL_MAINNET;
 
-const EGOBLOX_ADDRESS = process.env.EGOBLOX_ADDRESS_TESTNET;
+const EGOBLOX_ADDRESS =
+  process.env.ENVIRONMENT === 'TESTNET'
+    ? process.env.EGOBLOX_ADDRESS_TESTNET
+    : process.env.EGOBLOX_ADDRESS_MAINNET;
 
 const publicClient = createPublicClient({
   chain: baseSepolia,
@@ -24,13 +30,17 @@ const publicClient = createPublicClient({
 export class ContractInteractionService {
   // Get account based on private key
   async getAccount(privateKey: `0x${string}`) {
-    const owner = privateKeyToAccount(privateKey);
-    console.log(owner);
-
-    return await toCoinbaseSmartAccount({
-      client: publicClient,
-      owners: [owner],
-    });
+    try {
+      const owner = privateKeyToAccount(privateKey);
+      console.log(owner);
+      return await toCoinbaseSmartAccount({
+        client: publicClient,
+        owners: [owner],
+      });
+    } catch (error) {
+      console.error('Error getting account:', error);
+      throw error; // Rethrow the error to handle it in calling functions
+    }
   }
 
   // Get bundler client for processing transactions
@@ -46,13 +56,18 @@ export class ContractInteractionService {
 
   // Helper function to estimate gas and adjust pre-verification gas
   private async estimateGas(userOperation, bundlerClient) {
-    const estimate =
-      await bundlerClient.estimateUserOperationGas(userOperation);
-    estimate.preVerificationGas *= 2n; // Adjust preVerification upward
-    return estimate;
+    try {
+      const estimate =
+        await bundlerClient.estimateUserOperationGas(userOperation);
+      estimate.preVerificationGas *= 2n; // Adjust preVerification upward
+      return estimate;
+    } catch (error) {
+      console.error('Error estimating gas:', error);
+      throw error; // Rethrow the error for further handling
+    }
   }
 
-  // execute eth transfer
+  // Execute ETH transfer
   async executeEthTransferTransaction(
     privateKey: `0x${string}`,
     receiver: `0x${string}`,
@@ -63,7 +78,7 @@ export class ContractInteractionService {
       const userAccount = await this.getAccount(privateKey);
       console.log('This is the address:', userAccount.address);
 
-      // Step 2: Initialize bundler client or provider
+      // Step 2: Initialize bundler client
       const bundlerClient = await this.getBundlerClient(privateKey);
 
       // Step 3: Create the ETH transfer transaction
@@ -81,17 +96,10 @@ export class ContractInteractionService {
           this.estimateGas(userOperation, bundlerClient),
       };
 
-      // // Step 5: Sign and send the transaction
-      // const userOpHash = await bundlerClient.sendUserOperation({
-      //   account: userAccount,
-      //   calls: [ethTransferCall], // Using ETH transfer call instead of ERC-20 function
-      //   paymaster: true, // Paymaster logic (optional)
-      // });
-
       // Step 5: Sign and send the transaction
       const userOpHash = await bundlerClient.sendUserOperation({
         account: userAccount,
-        calls: [ethTransferCall], // Using ETH transfer call instead of ERC-20 function
+        calls: [ethTransferCall],
         paymaster: true,
       });
 
@@ -102,12 +110,12 @@ export class ContractInteractionService {
       console.log('Transaction receipt :', receipt);
       return receipt;
     } catch (error) {
-      console.error('Error sending transaction: ', error);
-      process.exit(1);
+      console.error('Error sending ETH transfer transaction:', error);
+      throw error; // Rethrow to allow higher-level handling
     }
   }
 
-  // Execute the erc20 token transfer
+  // Execute the ERC20 token transfer
   async executeTransferErc20Transaction(
     privateKey: `0x${string}`,
     tokenAddress: `0x${string}`,
@@ -117,22 +125,16 @@ export class ContractInteractionService {
   ) {
     try {
       const userAccount = await this.getAccount(privateKey);
-      console.log('this is address:', userAccount.address);
+      console.log('This is address:', userAccount.address);
       const bundlerClient = await this.getBundlerClient(privateKey);
 
-      const erc20transferCall: any = {
+      const erc20TransferCall: any = {
         abi: erc20Abi,
         functionName: 'transfer',
         to: tokenAddress,
         args: [receiver, amount * 10 ** decimals],
       };
 
-      // const erc20transferCall: any = {
-      //   abi: egoBloxAbi,
-      //   functionName: 'transferERC20',
-      //   to: EGOBLOX_ADDRESS,
-      //   args: [tokenAddress, receiver, amount * 10 ** decimals],
-      // };
       userAccount.userOperation = {
         estimateGas: (userOperation) =>
           this.estimateGas(userOperation, bundlerClient),
@@ -141,7 +143,7 @@ export class ContractInteractionService {
       // Sign and send the UserOperation
       const userOpHash = await bundlerClient.sendUserOperation({
         account: userAccount,
-        calls: [erc20transferCall],
+        calls: [erc20TransferCall],
         paymaster: true,
       });
 
@@ -152,20 +154,8 @@ export class ContractInteractionService {
       console.log('Transaction receipt :', receipt);
       return receipt;
     } catch (error) {
-      console.error('Error sending transaction: ', error);
-      process.exit(1);
+      console.error('Error sending ERC20 transfer transaction:', error);
+      throw error; // Rethrow to allow higher-level handling
     }
   }
-
-  // Log success message with relevant links
-  // private logTransactionSuccess(userOpHash: string, userAddress: string) {
-  //   console.log('✅ Transaction successfully sponsored!');
-  //   console.log(
-  //     `⛽ View sponsored UserOperation on blockscout: https://base-sepolia.blockscout.com/op/${userOpHash}`,
-  //   );
-  //   console.log(
-  //     `🔍 View NFT mint on basescan: https://sepolia.basescan.org/address/${userAddress}`,
-  //   );
-  //   process.exit();
-  // }
 }

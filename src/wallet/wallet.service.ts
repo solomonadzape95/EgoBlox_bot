@@ -4,6 +4,21 @@ import * as dotenv from 'dotenv';
 
 dotenv.config();
 
+const RPC_URL =
+  process.env.ENVIRONMENT === 'TESTNET'
+    ? process.env.RPC_URL_TESTNET
+    : process.env.RPC_URL;
+
+const USDC_ADDRESS =
+  process.env.ENVIRONMENT === 'TESTNET'
+    ? process.env.USDC_ADDRESS_TESTNET
+    : process.env.USDC_ADDRESS;
+
+const DAI_ADDRESS =
+  process.env.ENVIRONMENT === 'TESTNET'
+    ? process.env.DAI_ADDRESS_TESTNET
+    : process.env.DAI_ADDRESS;
+
 @Injectable()
 export class WalletService {
   // create wallet
@@ -56,7 +71,7 @@ export class WalletService {
     const balance = await multichainWallet.getBalance({
       address,
       network: 'ethereum',
-      rpcUrl: `${process.env.RPC_URL}`,
+      rpcUrl: `${RPC_URL}`,
     });
     return balance;
   };
@@ -68,7 +83,7 @@ export class WalletService {
     const balance = await multichainWallet.getBalance({
       address,
       network: 'ethereum',
-      rpcUrl: `${process.env.RPC_URL}`,
+      rpcUrl: `${RPC_URL}`,
       tokenAddress: tokenAddress,
     });
     return balance;
@@ -84,9 +99,9 @@ export class WalletService {
       recipientAddress,
       amount,
       network: 'ethereum',
-      rpcUrl: `${process.env.RPC_URL}`,
+      rpcUrl: `${RPC_URL}`,
       privateKey,
-      // gasPrice: "10", // TODO: increase this for faster transaction
+      // gasPrice: '20', // TODO: increase this for faster transaction
       data: description || '',
     });
 
@@ -103,10 +118,10 @@ export class WalletService {
       recipientAddress,
       amount,
       network: 'ethereum',
-      rpcUrl: `${process.env.RPC_URL}`,
+      rpcUrl: `${RPC_URL}`,
       privateKey,
-      //   gasPrice: '10', // TODO: increase this for faster transaction
-      tokenAddress: process.env.USDC_ADDRESS,
+      // gasPrice: '20', // TODO: increase this for faster transaction
+      tokenAddress: USDC_ADDRESS,
       data: description || '',
     });
 
@@ -123,10 +138,10 @@ export class WalletService {
       recipientAddress,
       amount,
       network: 'ethereum',
-      rpcUrl: `${process.env.RPC_URL}`,
+      rpcUrl: `${RPC_URL}`,
       privateKey,
-      //   gasPrice: '10', // TODO: increase this for faster transaction
-      tokenAddress: process.env.DAI_ADDRESS,
+      // gasPrice: '20', // TODO: increase this for faster transaction
+      tokenAddress: DAI_ADDRESS,
       data: description || '',
     });
 
@@ -139,7 +154,7 @@ export class WalletService {
     const receipt = await multichainWallet.getTransaction({
       hash,
       network: 'ethereum',
-      rpcUrl: `${process.env.RPC_URL}`,
+      rpcUrl: `${RPC_URL}`,
     });
 
     return receipt;

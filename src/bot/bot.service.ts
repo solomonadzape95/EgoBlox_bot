@@ -15,7 +15,7 @@ import {
   notifyReceiverMarkup,
 } from './markups';
 import { InjectModel } from '@nestjs/mongoose';
-import { User } from 'src/database/schemas/user.schema';
+import { User, UserDocument } from 'src/database/schemas/user.schema';
 import { Model } from 'mongoose';
 import { Session, SessionDocument } from 'src/database/schemas/session.schema';
 import {
@@ -35,6 +35,15 @@ import { ContractInteractionService } from 'src/paymaster-contract-interaction/c
 dotenv.config();
 
 const token = process.env.TELEGRAM_TOKEN;
+const USDC_ADDRESS =
+  process.env.ENVIRONMENT === 'TESTNET'
+    ? process.env.USDC_ADDRESS_TESTNET
+    : process.env.USDC_ADDRESS;
+
+const DAI_ADDRESS =
+  process.env.ENVIRONMENT === 'TESTNET'
+    ? process.env.DAI_ADDRESS_TESTNET
+    : process.env.DAI_ADDRESS;
 
 //dynamically import coinbaseOnchainkit
 async function loadGetAddressModule(name: string) {
@@ -70,60 +79,55 @@ export class BotService {
     this.logger.debug(msg);
     try {
       await this.egoBloxBot.sendChatAction(msg.chat.id, 'typing');
-      // condition to differntiate between users actions on the bot
-      const session: SessionDocument | null = await this.SessionModel.findOne({
-        chat_id: msg.chat.id,
-      });
-      const user = await this.UserModel.findOne({
-        chat_id: msg.chat.id,
-      });
-      console.log('session  ', session);
-      if (msg.text! !== '/start' && msg.text! !== '/menu') {
-        this.handleUserTextInputs(msg, session!);
-      } else {
-        const command = msg.text!;
-        console.log('Command :', command);
-        if (command === '/start') {
-          // delete existing user session
-          if (session) {
-            await this.SessionModel.deleteMany({
-              chat_id: msg.chat.id,
-            });
-          }
-          const username = `${msg.from.username}`;
-          if (!user) {
-            // save user
-            await this.UserModel.create({
-              chat_id: msg.chat.id,
-              username,
-            });
-          }
 
-          const welcome = await welcomeMessageMarkup(username);
+      // Run user and session queries concurrently to save time
+      const [session, user] = await Promise.all([
+        this.SessionModel.findOne({ chat_id: msg.chat.id }),
+        this.UserModel.findOne({ chat_id: msg.chat.id }),
+      ]);
 
-          if (welcome) {
-            const replyMarkup = {
-              inline_keyboard: welcome.keyboard,
-            };
-            await this.egoBloxBot.sendMessage(msg.chat.id, welcome.message, {
-              reply_markup: replyMarkup,
-            });
-          }
-        } else if (command === '/menu') {
-          const allFeatures = await allFeaturesMarkup();
-          if (allFeatures) {
-            const replyMarkup = {
-              inline_keyboard: allFeatures.keyboard,
-            };
-            return await this.egoBloxBot.sendMessage(
-              msg.chat.id,
-              allFeatures.message,
-              {
-                parse_mode: 'HTML',
-                reply_markup: replyMarkup,
-              },
-            );
-          }
+      // Handle text inputs if not a command
+      if (msg.text !== '/start' && msg.text !== '/menu') {
+        return this.handleUserTextInputs(msg, session!, user!);
+      }
+
+      const command = msg.text!;
+      console.log('Command :', command);
+
+      // Handle /start command
+      if (command === '/start') {
+        if (session) {
+          await this.SessionModel.deleteMany({ chat_id: msg.chat.id });
+        }
+
+        const username = msg.from.username;
+        if (!user) {
+          // Save user
+          await this.UserModel.create({
+            chat_id: msg.chat.id,
+            username,
+          });
+        }
+
+        const welcome = await welcomeMessageMarkup(username);
+        if (welcome) {
+          const replyMarkup = { inline_keyboard: welcome.keyboard };
+          await this.egoBloxBot.sendMessage(msg.chat.id, welcome.message, {
+            reply_markup: replyMarkup,
+          });
+        }
+        return;
+      }
+
+      // Handle /menu command
+      if (command === '/menu') {
+        const allFeatures = await allFeaturesMarkup();
+        if (allFeatures) {
+          const replyMarkup = { inline_keyboard: allFeatures.keyboard };
+          await this.egoBloxBot.sendMessage(msg.chat.id, allFeatures.message, {
+            parse_mode: 'HTML',
+            reply_markup: replyMarkup,
+          });
         }
       }
     } catch (error) {
@@ -135,10 +139,10 @@ export class BotService {
   handleUserTextInputs = async (
     msg: TelegramBot.Message,
     session?: SessionDocument,
+    user?: UserDocument,
   ) => {
     await this.egoBloxBot.sendChatAction(msg.chat.id, 'typing');
     try {
-      const user = await this.UserModel.findOne({ chat_id: msg.chat.id });
       if (session) {
         // update users answerId
         await this.SessionModel.updateOne(
@@ -153,13 +157,14 @@ export class BotService {
         return pinRegex.test(pin);
       }
 
-      // detect send token command
-      const matchedSend = detectSendToken(msg.text!.trim());
+      // detect send token command & detect buy airtime command
+      const [matchedSend, matchBuyAirtime] = await Promise.all([
+        detectSendToken(msg.text!.trim()),
+        detectAirtime(msg.text!.trim()),
+      ]);
       console.log('Matchedsend', matchedSend);
-
-      // detect buy airtime command
-      const matchBuyAirtime = detectAirtime(msg.text!.trim());
       console.log('Matchedairtime', matchBuyAirtime);
+
       // parse incoming message and handle commands
       try {
         // handle smart account wallet creation
@@ -168,256 +173,255 @@ export class BotService {
           session!.walletPinPromptInput &&
           session!.createSmartWallet
         ) {
-          const pin = msg.text!.trim();
-          const hashedPin = await bcrypt.hash(pin, this.saltRounds);
-          const newWallet = this.walletService.createWallet();
-          const smartAccount = await this.contractInteractionService.getAccount(
-            `${newWallet.privateKey}` as `0x${string}`,
-          );
-          // encrypt wallet details with pin
-          const encryptedWalletDetails = await this.walletService.encryptWallet(
-            pin,
-            newWallet.privateKey,
-          );
+          try {
+            await this.egoBloxBot.sendChatAction(msg.chat.id, 'typing');
+            const pin = msg.text!.trim();
+            const [hashedPin, newWallet] = await Promise.all([
+              bcrypt.hash(pin, this.saltRounds),
+              this.walletService.createWallet(),
+            ]);
+            const smartAccount =
+              await this.contractInteractionService.getAccount(
+                `${newWallet.privateKey}` as `0x${string}`,
+              );
 
-          // encrypt with deafault pin(for recovery)
-          const defaultEncryptedWalletDetails =
-            await this.walletService.encryptWallet(
-              process.env.DEFAULT_WALLET_PIN!,
-              newWallet.privateKey,
+            // Encrypt wallet details concurrently
+            const [encryptedWalletDetails, defaultEncryptedWalletDetails] =
+              await Promise.all([
+                this.walletService.encryptWallet(pin, newWallet.privateKey),
+                this.walletService.encryptWallet(
+                  process.env.DEFAULT_WALLET_PIN!,
+                  newWallet.privateKey,
+                ),
+              ]);
+
+            // Save user wallet details
+            await this.UserModel.updateOne(
+              { chat_id: msg.chat.id },
+              {
+                WalletType: 'SMART',
+                defaultWalletDetails: defaultEncryptedWalletDetails.json,
+                walletDetails: encryptedWalletDetails.json,
+                pin: hashedPin,
+                walletAddress: newWallet.address,
+                smartWalletAddress: smartAccount.address,
+              },
             );
-          // save  user wallet details
-          await this.UserModel.updateOne(
-            { chat_id: msg.chat.id },
-            {
-              WalletType: 'SMART',
-              defaultWalletDetails: defaultEncryptedWalletDetails.json,
-              walletDetails: encryptedWalletDetails.json,
-              pin: hashedPin,
-              walletAddress: newWallet.address,
-              smartWalletAddress: smartAccount.address,
-            },
-          );
 
-          const promises: any[] = [];
-          const latestSession = await this.SessionModel.findOne({
-            chat_id: msg.chat.id,
-          });
-          // loop through pin prompt to delete them
-          for (
-            let i = 0;
-            i < latestSession!.walletPinPromptInputId.length;
-            i++
-          ) {
-            promises.push(
-              await this.egoBloxBot.deleteMessage(
-                msg.chat.id,
-                latestSession!.walletPinPromptInputId[i],
+            // Fetch session
+            const latestSession = await this.SessionModel.findOne({
+              chat_id: msg.chat.id,
+            });
+
+            // Combine message deletion operations into one Promise.all
+            const deleteMessagesPromises = [
+              ...latestSession!.walletPinPromptInputId.map((id) =>
+                this.egoBloxBot.deleteMessage(msg.chat.id, id),
               ),
-            );
-          }
-          // loop through to delete all userReply
-          for (let i = 0; i < latestSession!.userInputId.length; i++) {
-            promises.push(
-              await this.egoBloxBot.deleteMessage(
-                msg.chat.id,
-                latestSession!.userInputId[i],
+              ...latestSession!.userInputId.map((id) =>
+                this.egoBloxBot.deleteMessage(msg.chat.id, id),
               ),
-            );
-          }
+            ];
 
-          await this.sendWalletDetails(
-            msg.chat.id,
-            smartAccount.address,
-            'SMART',
-          );
+            // Delete all messages concurrently
+            await Promise.all(deleteMessagesPromises);
+
+            // Send wallet details to the user
+            await this.sendWalletDetails(
+              msg.chat.id,
+              smartAccount.address,
+              'SMART',
+            );
+          } catch (error) {
+            console.error(error);
+          }
         } // handle normal wallet creation
         else if (
           isValidPin(msg.text!.trim()) &&
           session!.walletPinPromptInput &&
           session!.createWallet
         ) {
-          const pin = msg.text!.trim();
-          const hashedPin = await bcrypt.hash(pin, this.saltRounds);
-          const newWallet = this.walletService.createWallet();
+          try {
+            await this.egoBloxBot.sendChatAction(msg.chat.id, 'typing');
+            const pin = msg.text!.trim();
+            // Concurrent hashing and wallet creation
+            const [hashedPin, newWallet] = await Promise.all([
+              bcrypt.hash(pin, this.saltRounds),
+              this.walletService.createWallet(),
+            ]);
 
-          // encrypt wallet details with pin
-          const encryptedWalletDetails = await this.walletService.encryptWallet(
-            pin,
-            newWallet.privateKey,
-          );
+            // Encrypt wallet details concurrently
+            const [encryptedWalletDetails, defaultEncryptedWalletDetails] =
+              await Promise.all([
+                this.walletService.encryptWallet(pin, newWallet.privateKey),
+                this.walletService.encryptWallet(
+                  process.env.DEFAULT_WALLET_PIN!,
+                  newWallet.privateKey,
+                ),
+              ]);
 
-          // encrypt with deafault pin(for recovery)
-          const defaultEncryptedWalletDetails =
-            await this.walletService.encryptWallet(
-              process.env.DEFAULT_WALLET_PIN!,
-              newWallet.privateKey,
+            // Save user wallet details
+            await this.UserModel.updateOne(
+              { chat_id: msg.chat.id },
+              {
+                WalletType: 'NORMAL',
+                defaultWalletDetails: defaultEncryptedWalletDetails.json,
+                walletDetails: encryptedWalletDetails.json,
+                pin: hashedPin,
+                walletAddress: newWallet.address,
+              },
             );
-          // save  user wallet details
-          await this.UserModel.updateOne(
-            { chat_id: msg.chat.id },
-            {
-              WalletType: 'NORMAL',
-              defaultWalletDetails: defaultEncryptedWalletDetails.json,
-              walletDetails: encryptedWalletDetails.json,
-              pin: hashedPin,
-              walletAddress: newWallet.address,
-            },
-          );
 
-          const promises: any[] = [];
-          const latestSession = await this.SessionModel.findOne({
-            chat_id: msg.chat.id,
-          });
-          // loop through pin prompt to delete them
-          for (
-            let i = 0;
-            i < latestSession!.walletPinPromptInputId.length;
-            i++
-          ) {
-            promises.push(
-              await this.egoBloxBot.deleteMessage(
-                msg.chat.id,
-                latestSession!.walletPinPromptInputId[i],
+            // Fetch session once
+            const latestSession = await this.SessionModel.findOne({
+              chat_id: msg.chat.id,
+            });
+
+            // Combine message deletion into a single Promise.all
+            const deleteMessagesPromises = [
+              ...latestSession!.walletPinPromptInputId.map((id) =>
+                this.egoBloxBot.deleteMessage(msg.chat.id, id),
               ),
-            );
-          }
-          // loop through to delete all userReply
-          for (let i = 0; i < latestSession!.userInputId.length; i++) {
-            promises.push(
-              await this.egoBloxBot.deleteMessage(
-                msg.chat.id,
-                latestSession!.userInputId[i],
+              ...latestSession!.userInputId.map((id) =>
+                this.egoBloxBot.deleteMessage(msg.chat.id, id),
               ),
-            );
-          }
+            ];
 
-          await this.sendWalletDetails(msg.chat.id, newWallet.address);
+            // Execute all message deletions concurrently
+            await Promise.all(deleteMessagesPromises);
+
+            // Send wallet details to the user
+            await this.sendWalletDetails(msg.chat.id, newWallet.address);
+          } catch (error) {
+            console.error(error);
+          }
         } // wallet import pin
         else if (
           isValidPin(msg.text!.trim()) &&
           session!.walletPinPromptInput &&
           session!.importWallet
         ) {
-          const pin = msg.text!.trim();
-          const hashedPin = await bcrypt.hash(pin, this.saltRounds);
-          const user = await this.UserModel.findOne({ chat_id: msg.chat.id });
-          // check if a user wallet details exist, then decrypt with default pin and and encrypt again
-          if (user!.walletAddress && user!.defaultWalletDetails) {
-            const decryptedWallet = await this.walletService.decryptWallet(
-              process.env.DEFAULT_WALLET_PIN!,
-              user!.defaultWalletDetails,
-            );
-            const encryptedWalletDetails =
-              await this.walletService.encryptWallet(
-                pin,
-                decryptedWallet.privateKey,
+          try {
+            await this.egoBloxBot.sendChatAction(msg.chat.id, 'typing');
+            const pin = msg.text!.trim();
+            const hashedPin = await bcrypt.hash(pin, this.saltRounds);
+            if (user!.walletAddress && user!.defaultWalletDetails) {
+              // Concurrently decrypt the wallet and encrypt with new pin
+              const decryptedWallet = await this.walletService.decryptWallet(
+                process.env.DEFAULT_WALLET_PIN!,
+                user!.defaultWalletDetails,
               );
-            // save  user wallet details
-            await this.UserModel.updateOne(
-              { chat_id: msg.chat.id },
-              {
-                walletDetails: encryptedWalletDetails.json,
-                pin: hashedPin,
-                walletAddress: decryptedWallet.address,
-              },
-            );
 
-            await this.egoBloxBot.sendMessage(
-              msg.chat.id,
-              'Transaction pin successfully updated',
-            );
-          }
+              const encryptedWalletDetails =
+                await this.walletService.encryptWallet(
+                  pin,
+                  decryptedWallet.privateKey,
+                );
 
-          const promises: any[] = [];
-          const latestSession = await this.SessionModel.findOne({
-            chat_id: msg.chat.id,
-          });
-          // loop through pin prompt to delete them
-          for (
-            let i = 0;
-            i < latestSession!.walletPinPromptInputId.length;
-            i++
-          ) {
-            promises.push(
-              await this.egoBloxBot.deleteMessage(
+              // Save user wallet details
+              await this.UserModel.updateOne(
+                { chat_id: msg.chat.id },
+                {
+                  walletDetails: encryptedWalletDetails.json,
+                  pin: hashedPin,
+                  walletAddress: decryptedWallet.address,
+                },
+              );
+
+              await this.egoBloxBot.sendMessage(
                 msg.chat.id,
-                latestSession!.walletPinPromptInputId[i],
-              ),
-            );
-          }
-          // loop through to delete all userReply
-          for (let i = 0; i < latestSession!.userInputId.length; i++) {
-            promises.push(
-              await this.egoBloxBot.deleteMessage(
-                msg.chat.id,
-                latestSession!.userInputId[i],
-              ),
-            );
-          }
+                'Transaction pin successfully updated',
+              );
+            }
 
-          await this.SessionModel.deleteMany({ chat_id: msg.chat.id });
+            // Fetch session once
+            const latestSession = await this.SessionModel.findOne({
+              chat_id: msg.chat.id,
+            });
+
+            // Combine message deletion into one Promise.all
+            const deleteMessagesPromises = [
+              ...latestSession!.walletPinPromptInputId.map((id) =>
+                this.egoBloxBot.deleteMessage(msg.chat.id, id),
+              ),
+              ...latestSession!.userInputId.map((id) =>
+                this.egoBloxBot.deleteMessage(msg.chat.id, id),
+              ),
+            ];
+
+            // Delete all messages concurrently
+            await Promise.all(deleteMessagesPromises);
+
+            // Delete user session
+            await this.SessionModel.deleteMany({ chat_id: msg.chat.id });
+          } catch (error) {
+            console.error(error);
+          }
         } // wallet export
         else if (
           isValidPin(msg.text!.trim()) &&
           session!.walletPinPromptInput &&
           session!.exportWallet
         ) {
-          const pin = msg.text!.trim();
-          const user = await this.UserModel.findOne({ chat_id: msg.chat.id });
-          // compare hashed pin
-          const pinMatch = await bcrypt.compare(pin, user!.pin);
-          // decrypt wallet if pin is correct
-          if (pinMatch && user!.walletAddress && user!.walletDetails) {
-            const decryptedWallet = await this.walletService.decryptWallet(
-              pin,
-              user!.walletDetails,
-            );
+          try {
+            await this.egoBloxBot.sendChatAction(msg.chat.id, 'typing');
+            const pin = msg.text!.trim();
+            // Compare hashed pin
+            const pinMatch = await bcrypt.compare(pin, user!.pin);
 
-            if (decryptedWallet.privateKey) {
-              const promises: any[] = [];
-              const latestSession = await this.SessionModel.findOne({
-                chat_id: msg.chat.id,
-              });
-              // loop through pin prompt to delete them
-              for (
-                let i = 0;
-                i < latestSession!.walletPinPromptInputId.length;
-                i++
-              ) {
-                promises.push(
-                  await this.egoBloxBot.deleteMessage(
-                    msg.chat.id,
-                    latestSession!.walletPinPromptInputId[i],
-                  ),
-                );
-              }
-              // loop through to delete all userReply
-              for (let i = 0; i < latestSession!.userInputId.length; i++) {
-                promises.push(
-                  await this.egoBloxBot.deleteMessage(
-                    msg.chat.id,
-                    latestSession!.userInputId[i],
-                  ),
-                );
-              }
-              console.log(
-                'user details :',
-                decryptedWallet.privateKey,
-                user!.walletAddress,
+            // Decrypt wallet if the pin is correct
+            if (pinMatch && user!.walletAddress && user!.walletDetails) {
+              const decryptedWallet = await this.walletService.decryptWallet(
+                pin,
+                user!.walletDetails,
               );
-              // display wallet key
-              await this.displayWalletPrivateKey(
+
+              if (decryptedWallet.privateKey) {
+                // Fetch session once
+                const latestSession = await this.SessionModel.findOne({
+                  chat_id: msg.chat.id,
+                });
+
+                // Combine deletion operations into a single Promise.all
+                const deleteMessagesPromises = [
+                  ...latestSession!.walletPinPromptInputId.map((id) =>
+                    this.egoBloxBot.deleteMessage(msg.chat.id, id),
+                  ),
+                  ...latestSession!.userInputId.map((id) =>
+                    this.egoBloxBot.deleteMessage(msg.chat.id, id),
+                  ),
+                ];
+
+                // Execute all deletions concurrently
+                await Promise.all(deleteMessagesPromises);
+
+                // Display the decrypted private key to the user
+                await this.displayWalletPrivateKey(
+                  msg.chat.id,
+                  decryptedWallet.privateKey,
+                );
+
+                console.log(
+                  'Decrypted wallet private key:',
+                  decryptedWallet.privateKey,
+                  'Wallet address:',
+                  user!.walletAddress,
+                );
+              }
+
+              // Delete the session after operations
+              await this.SessionModel.deleteMany({ chat_id: msg.chat.id });
+            } else {
+              await this.egoBloxBot.sendMessage(
                 msg.chat.id,
-                decryptedWallet.privateKey,
+                `Processing command failed, Invalid pin`,
               );
             }
-
-            await this.SessionModel.deleteMany({ chat_id: msg.chat.id });
-          } else {
-            return await this.egoBloxBot.sendMessage(
+          } catch (error) {
+            console.error('Error exporting wallet:', error);
+            await this.egoBloxBot.sendMessage(
               msg.chat.id,
-              `Processing command failed, Invalid pin`,
+              'An error occurred while exporting the wallet. Please try again later.',
             );
           }
         } // reset wallet
@@ -426,70 +430,79 @@ export class BotService {
           session!.walletPinPromptInput &&
           session!.resetWallet
         ) {
-          const pin = msg.text!.trim();
-          const user = await this.UserModel.findOne({ chat_id: msg.chat.id });
-          // compare hashed pin
-          const pinMatch = await bcrypt.compare(pin, user!.pin);
-          // delete wallet if pin is correct
-          if (pinMatch) {
-            await this.UserModel.updateOne(
-              { chat_id: msg.chat.id },
-              {
-                $unset: {
-                  smartWalletAddress: '',
-                  walletAddress: '',
-                  walletDetails: '',
-                  defaultWalletDetails: '',
-                  pin: '',
+          try {
+            await this.egoBloxBot.sendChatAction(msg.chat.id, 'typing');
+            const pin = msg.text!.trim();
+            // Ensure the user exists
+            if (!user) {
+              return await this.egoBloxBot.sendMessage(
+                msg.chat.id,
+                'User not found. Please try again.',
+              );
+            }
+
+            // Compare hashed pin
+            const pinMatch = await bcrypt.compare(pin, user.pin);
+
+            // Delete wallet if pin is correct
+            if (pinMatch) {
+              await this.UserModel.updateOne(
+                { chat_id: msg.chat.id },
+                {
+                  $unset: {
+                    smartWalletAddress: '',
+                    walletAddress: '',
+                    walletDetails: '',
+                    defaultWalletDetails: '',
+                    pin: '',
+                  },
                 },
-              },
-            );
+              );
 
-            const promises: any[] = [];
-            const latestSession = await this.SessionModel.findOne({
-              chat_id: msg.chat.id,
-            });
-            // loop through pin prompt to delete them
-            for (
-              let i = 0;
-              i < latestSession!.walletPinPromptInputId.length;
-              i++
-            ) {
-              try {
-                promises.push(
-                  await this.egoBloxBot.deleteMessage(
-                    msg.chat.id,
-                    latestSession!.walletPinPromptInputId[i],
-                  ),
-                );
-              } catch (error) {
-                console.log(error);
-              }
-            }
-            // loop through to delete all userReply
-            for (let i = 0; i < latestSession!.userInputId.length; i++) {
-              try {
-                promises.push(
-                  await this.egoBloxBot.deleteMessage(
-                    msg.chat.id,
-                    latestSession!.userInputId[i],
-                  ),
-                );
-              } catch (error) {
-                console.log(error);
-              }
-            }
+              // Fetch the latest session once
+              const latestSession = await this.SessionModel.findOne({
+                chat_id: msg.chat.id,
+              });
 
+              if (!latestSession) {
+                return await this.egoBloxBot.sendMessage(
+                  msg.chat.id,
+                  'Session not found. Please try again later.',
+                );
+              }
+
+              // Combine deletion operations into a single Promise.all
+              const deleteMessagesPromises = [
+                ...latestSession.walletPinPromptInputId.map((id) =>
+                  this.egoBloxBot.deleteMessage(msg.chat.id, id),
+                ),
+                ...latestSession.userInputId.map((id) =>
+                  this.egoBloxBot.deleteMessage(msg.chat.id, id),
+                ),
+              ];
+
+              // Execute all deletions concurrently
+              await Promise.all(deleteMessagesPromises);
+
+              // Confirm deletion of the wallet
+              await this.egoBloxBot.sendMessage(
+                msg.chat.id,
+                'Wallet deleted successfully',
+              );
+
+              // Delete the session after operations
+              await this.SessionModel.deleteMany({ chat_id: msg.chat.id });
+            } else {
+              await this.egoBloxBot.sendMessage(
+                msg.chat.id,
+                'Invalid pin. Please try again.',
+              );
+            }
+          } catch (error) {
+            console.error('Error resetting wallet:', error);
             await this.egoBloxBot.sendMessage(
               msg.chat.id,
-              'Wallet deleted successfully',
-            );
-
-            await this.SessionModel.deleteMany({ chat_id: msg.chat.id });
-          } else {
-            return await this.egoBloxBot.sendMessage(
-              msg.chat.id,
-              `Processing command failed, Invalid pin`,
+              'An error occurred while resetting the wallet. Please try again later.',
             );
           }
         } // handle send token
@@ -498,302 +511,192 @@ export class BotService {
           session!.walletPinPromptInput &&
           session!.sendToken
         ) {
-          const pin = msg.text!.trim();
-          const user = await this.UserModel.findOne({ chat_id: msg.chat.id });
-          // compare hashed pin
-          const pinMatch = await bcrypt.compare(pin, user!.pin);
-          // send Token if pin is correct
-          if (pinMatch) {
+          try {
+            await this.egoBloxBot.sendChatAction(msg.chat.id, 'typing');
+            const pin = msg.text!.trim();
+            // compare hashed pin
+            const pinMatch = await bcrypt.compare(pin, user!.pin);
+
+            if (!pinMatch) {
+              return await this.egoBloxBot.sendMessage(
+                msg.chat.id,
+                `Processing command failed, Invalid pin`,
+              );
+            }
+
             // DECRYPT WALLET
             const walletDetail = await this.walletService.decryptWallet(
               pin,
               user!.walletDetails,
             );
+
             // get the transaction
             const transaction = await this.TransactionModel.findOne({
               _id: session!.transactionId,
             });
+
             let txn: any;
             let receipt: any;
+
+            const executeTransaction = async (
+              transferFn: () => Promise<any>,
+              smart = false,
+            ) => {
+              txn = await transferFn();
+              if (smart) {
+                await this.TransactionModel.updateOne(
+                  { _id: transaction!._id },
+                  {
+                    userOpHash: txn.userOpHash,
+                    status: txn.success ? 'successful' : 'failed',
+                    ownerApproved: true,
+                    hash: txn.receipt.transactionHash,
+                  },
+                );
+              } else {
+                receipt = await txn.wait();
+                await this.TransactionModel.updateOne(
+                  { _id: transaction!._id },
+                  {
+                    status: receipt.status === 0 ? 'failed' : 'successful',
+                    ownerApproved: true,
+                    hash: receipt.transactionHash,
+                  },
+                );
+              }
+            };
 
             switch (transaction!.token) {
               case 'ETH':
                 if (user?.WalletType === 'SMART') {
-                  txn =
-                    await this.contractInteractionService.executeEthTransferTransaction(
-                      walletDetail.privateKey as `0x${string}`,
-                      transaction!.receiverAddress as `0x${string}`,
-                      Number(transaction!.amount),
-                    );
-
-                  console.log(txn);
-                  //update transaction
-                  await this.TransactionModel.updateOne(
-                    { _id: transaction!._id },
-                    {
-                      userOpHash: txn.userOpHash,
-                      status: txn.success === true ? 'successful' : 'failed',
-                      ownerApproved: true,
-                      hash: txn.receipt.transactionHash,
-                    },
+                  await executeTransaction(
+                    () =>
+                      this.contractInteractionService.executeEthTransferTransaction(
+                        walletDetail.privateKey as `0x${string}`,
+                        transaction!.receiverAddress as `0x${string}`,
+                        Number(transaction!.amount),
+                      ),
+                    true,
                   );
-                  if (transaction?.receiverChatId) {
-                    await this.notifyReceiver(
-                      transaction?.receiverChatId,
-                      {
-                        transactionHash: txn.receipt.transactionHash,
-                        status: txn.success === true ? 1 : 0,
-                      },
-                      `Received ${transaction!.amount} ${transaction!.token} from @${user.username}`,
-                    );
-                  }
-                  await this.sendTransactionReceipt(
-                    msg.chat.id,
-                    {
-                      transactionHash: txn.receipt.transactionHash,
-                      status: txn.success === true ? 1 : 0,
-                    },
-                    `Transfer of ${transaction!.amount} ${transaction!.token} to ${transaction!.receiver}`,
-                  );
-
-                  break;
                 } else {
-                  txn = await this.walletService.transferEth(
-                    walletDetail.privateKey,
-                    transaction!.receiverAddress,
-                    Number(transaction!.amount),
+                  await executeTransaction(() =>
+                    this.walletService.transferEth(
+                      walletDetail.privateKey,
+                      transaction!.receiverAddress,
+                      Number(transaction!.amount),
+                    ),
                   );
-
-                  console.log(txn);
-                  receipt = await txn.wait();
-                  console.log(receipt);
-                  //update transaction
-                  await this.TransactionModel.updateOne(
-                    { _id: transaction!._id },
-                    {
-                      status: receipt.status === 0 ? 'failed' : 'successful',
-                      ownerApproved: true,
-                      hash: receipt.transactionHash,
-                    },
-                  );
-
-                  if (transaction?.receiverChatId) {
-                    await this.notifyReceiver(
-                      transaction?.receiverChatId,
-                      receipt,
-                      `Received ${transaction!.amount} ${transaction!.token} from @${user?.username}`,
-                    );
-                  }
-                  await this.sendTransactionReceipt(
-                    msg.chat.id,
-                    receipt,
-                    `Transfer of ${transaction!.amount} ${transaction!.token} to ${transaction!.receiver}`,
-                  );
-
-                  break;
                 }
+                break;
 
               case 'USDC':
                 if (user?.WalletType === 'SMART') {
-                  txn =
-                    await this.contractInteractionService.executeTransferErc20Transaction(
-                      walletDetail.privateKey as `0x${string}`,
-                      process.env.USDC_ADDRESS as `0x${string}`,
-                      transaction!.receiverAddress as `0x${string}`,
-                      Number(transaction!.amount),
-                      6,
-                    );
-
-                  console.log(txn);
-                  //update transaction
-                  await this.TransactionModel.updateOne(
-                    { _id: transaction!._id },
-                    {
-                      userOpHash: txn.userOpHash,
-                      status: txn.success === true ? 'successful' : 'failed',
-                      ownerApproved: true,
-                      hash: txn.receipt.transactionHash,
-                    },
+                  await executeTransaction(
+                    () =>
+                      this.contractInteractionService.executeTransferErc20Transaction(
+                        walletDetail.privateKey as `0x${string}`,
+                        USDC_ADDRESS as `0x${string}`,
+                        transaction!.receiverAddress as `0x${string}`,
+                        Number(transaction!.amount),
+                        6,
+                      ),
+                    true,
                   );
-
-                  await this.sendTransactionReceipt(
-                    msg.chat.id,
-                    {
-                      transactionHash: txn.receipt.transactionHash,
-                      status: txn.success === true ? 1 : 0,
-                    },
-                    `Transfer of ${transaction!.amount} ${transaction!.token} to @${user.username}`,
-                  );
-                  if (transaction?.receiverChatId) {
-                    await this.notifyReceiver(
-                      transaction?.receiverChatId,
-                      {
-                        transactionHash: txn.receipt.transactionHash,
-                        status: txn.success === true ? 1 : 0,
-                      },
-                      `Received ${transaction!.amount} ${transaction!.token} from @${user.username}`,
-                    );
-                  }
-                  break;
                 } else {
-                  txn = await this.walletService.transferUSDC(
-                    walletDetail.privateKey,
-                    transaction!.receiverAddress,
-                    Number(transaction!.amount),
+                  await executeTransaction(() =>
+                    this.walletService.transferUSDC(
+                      walletDetail.privateKey,
+                      transaction!.receiverAddress,
+                      Number(transaction!.amount),
+                    ),
                   );
-                  console.log(txn);
-                  receipt = await txn.wait();
-                  console.log(receipt);
-                  //update transaction
-                  await this.TransactionModel.updateOne(
-                    { _id: transaction!._id },
-                    {
-                      status: receipt.status === 0 ? 'failed' : 'successful',
-                      ownerApproved: true,
-                      hash: receipt.transactionHash,
-                    },
-                  );
-
-                  await this.sendTransactionReceipt(
-                    msg.chat.id,
-                    receipt,
-                    `Transfer of ${transaction!.amount} ${transaction!.token} to ${transaction!.receiver}`,
-                  );
-                  if (transaction?.receiverChatId) {
-                    await this.notifyReceiver(
-                      transaction?.receiverChatId,
-                      receipt,
-                      `Received ${transaction!.amount} ${transaction!.token} from @${user?.username}`,
-                    );
-                  }
-
-                  break;
                 }
+                break;
 
               case 'DAI':
                 if (user?.WalletType === 'SMART') {
-                  txn =
-                    await this.contractInteractionService.executeTransferErc20Transaction(
-                      walletDetail.privateKey as `0x${string}`,
-                      process.env.DAI_ADDRESS as `0x${string}`,
-                      transaction!.receiverAddress as `0x${string}`,
-                      Number(transaction!.amount),
-                      6,
-                    );
-
-                  console.log(txn);
-                  //update transaction
-                  await this.TransactionModel.updateOne(
-                    { _id: transaction!._id },
-                    {
-                      userOpHash: txn.userOpHash,
-                      status: txn.success === true ? 'successful' : 'failed',
-                      ownerApproved: true,
-                      hash: txn.receipt.transactionHash,
-                    },
+                  await executeTransaction(
+                    () =>
+                      this.contractInteractionService.executeTransferErc20Transaction(
+                        walletDetail.privateKey as `0x${string}`,
+                        DAI_ADDRESS as `0x${string}`,
+                        transaction!.receiverAddress as `0x${string}`,
+                        Number(transaction!.amount),
+                        6,
+                      ),
+                    true,
                   );
-
-                  await this.sendTransactionReceipt(
-                    msg.chat.id,
-                    {
-                      transactionHash: txn.receipt.transactionHash,
-                      status: txn.success === true ? 1 : 0,
-                    },
-                    `Transfer of ${transaction!.amount} ${transaction!.token} to ${transaction!.receiver}`,
-                  );
-                  if (transaction?.receiverChatId) {
-                    await this.notifyReceiver(
-                      transaction?.receiverChatId,
-                      {
-                        transactionHash: txn.receipt.transactionHash,
-                        status: txn.success === true ? 1 : 0,
-                      },
-                      `Received ${transaction!.amount} ${transaction!.token} from @${user.username}`,
-                    );
-                  }
-
-                  break;
                 } else {
-                  txn = await this.walletService.transferDAI(
-                    walletDetail.privateKey,
-                    transaction!.receiverAddress,
-                    Number(transaction!.amount),
+                  await executeTransaction(() =>
+                    this.walletService.transferDAI(
+                      walletDetail.privateKey,
+                      transaction!.receiverAddress,
+                      Number(transaction!.amount),
+                    ),
                   );
-                  console.log(txn);
-                  receipt = await txn.wait();
-                  console.log(receipt);
-                  //update transaction
-                  await this.TransactionModel.updateOne(
-                    { _id: transaction!._id },
-                    {
-                      status: receipt.status === 0 ? 'failed' : 'successful',
-                      ownerApproved: true,
-                      hash: receipt.transactionHash,
-                    },
-                  );
-
-                  await this.sendTransactionReceipt(
-                    msg.chat.id,
-                    receipt,
-                    `Transfer of ${transaction!.amount} ${transaction!.token} to ${transaction!.receiver}`,
-                  );
-
-                  if (transaction?.receiverChatId) {
-                    await this.notifyReceiver(
-                      transaction?.receiverChatId,
-                      receipt,
-                      `Received ${transaction!.amount} ${transaction!.token} from @${user?.username}`,
-                    );
-                  }
-
-                  break;
                 }
+                break;
 
               default:
                 break;
             }
 
-            const promises: any[] = [];
+            const notifyAndSendReceipt = async (
+              status: boolean,
+              hash: string,
+            ) => {
+              const statusFlag = status ? 1 : 0;
+              await this.sendTransactionReceipt(
+                msg.chat.id,
+                { transactionHash: hash, status: statusFlag },
+                `Transfer of ${transaction!.amount} ${transaction!.token} to ${transaction!.receiver}`,
+              );
+              if (transaction?.receiverChatId) {
+                await this.notifyReceiver(
+                  transaction.receiverChatId,
+                  { transactionHash: hash, status: statusFlag },
+                  `Received ${transaction!.amount} ${transaction!.token} from @${user?.username}`,
+                );
+              }
+            };
+
+            // Notify and send receipt for ETH
+            if (user?.WalletType === 'SMART') {
+              await notifyAndSendReceipt(
+                txn.success,
+                txn.receipt.transactionHash,
+              );
+            } else {
+              await notifyAndSendReceipt(
+                receipt.status === 1,
+                receipt.transactionHash,
+              );
+            }
+
             const latestSession = await this.SessionModel.findOne({
               chat_id: msg.chat.id,
             });
-            console.log('latest session', latestSession);
-            // loop through pin prompt to delete them
-            for (
-              let i = 0;
-              i < latestSession!.walletPinPromptInputId.length;
-              i++
-            ) {
-              try {
-                promises.push(
-                  await this.egoBloxBot.deleteMessage(
-                    msg.chat.id,
-                    latestSession!.walletPinPromptInputId[i],
-                  ),
-                );
-              } catch (error) {
-                console.log(error);
+            const deleteMessages = async (messageIds: number[]) => {
+              for (const id of messageIds) {
+                try {
+                  await this.egoBloxBot.deleteMessage(msg.chat.id, id);
+                } catch (error) {
+                  console.log(error);
+                }
               }
-            }
-            // loop through to delete all userReply
-            for (let i = 0; i < latestSession!.userInputId.length; i++) {
-              try {
-                promises.push(
-                  await this.egoBloxBot.deleteMessage(
-                    msg.chat.id,
-                    latestSession!.userInputId[i],
-                  ),
-                );
-              } catch (error) {
-                console.log(error);
-              }
-            }
-            // delete all session
-            await this.SessionModel.deleteMany({ chat_id: msg.chat.id });
-          } else {
-            return await this.egoBloxBot.sendMessage(
+            };
+
+            // Delete all messages related to PIN prompts and user inputs
+            await Promise.all([
+              deleteMessages(latestSession!.walletPinPromptInputId),
+              deleteMessages(latestSession!.userInputId),
+              this.SessionModel.deleteMany({ chat_id: msg.chat.id }),
+            ]);
+          } catch (error) {
+            console.error(`Transaction error: ${error.message}`);
+            await this.egoBloxBot.sendMessage(
               msg.chat.id,
-              `Processing command failed, Invalid pin`,
+              `Transaction failed due to an error. Please try again later.`,
             );
           }
         }
@@ -803,23 +706,30 @@ export class BotService {
           session!.walletPinPromptInput &&
           session!.airtime
         ) {
-          const pin = msg.text!.trim();
-          const user = await this.UserModel.findOne({ chat_id: msg.chat.id });
-          // compare hashed pin
-          const pinMatch = await bcrypt.compare(pin, user!.pin);
-          // send Token if pin is correct
-          if (pinMatch) {
-            // DECRYPT WALLET
+          try {
+            await this.egoBloxBot.sendChatAction(msg.chat.id, 'typing');
+            const pin = msg.text!.trim();
+            // Compare hashed pin
+            const pinMatch = await bcrypt.compare(pin, user!.pin);
+            if (!pinMatch) {
+              return await this.egoBloxBot.sendMessage(
+                msg.chat.id,
+                'Processing command failed, Invalid pin',
+              );
+            }
+
+            // Decrypt wallet
             const walletDetail = await this.walletService.decryptWallet(
               pin,
               user!.walletDetails,
             );
-            // get the transaction
             const transaction = await this.TransactionModel.findOne({
               _id: session!.transactionId,
             });
+
             let txn: any;
             let receipt: any;
+            // Execute transaction based on token type
             switch (transaction!.token) {
               case 'ETH':
                 if (user?.WalletType === 'SMART') {
@@ -829,342 +739,152 @@ export class BotService {
                       process.env.ADMIN_WALLET as `0x${string}`,
                       Number(transaction!.amount),
                     );
-                  console.log(txn);
-
-                  if (txn.success === true) {
-                    // buy airtime
-                    const airtime = await this.billsService.buyAirtime(
-                      `${transaction!.airtimeDataNumber}`,
-                      `${transaction!.airtimeAmount}`,
-                    );
-                    if (airtime) {
-                      //update transaction
-
-                      console.log('paid airtime', airtime);
-                      await this.TransactionModel.updateOne(
-                        { _id: transaction!._id },
-                        {
-                          flutterWave_status: airtime.status,
-                          flutterWave_reference: airtime.data.reference,
-                          flutterWave_tx_ref: airtime.data.tx_ref,
-                          flutterWave_bill_Network: airtime.data.network,
-                        },
-                      );
-                    }
-                  }
-                  //update transaction
-                  await this.TransactionModel.updateOne(
-                    { _id: transaction!._id },
-                    {
-                      userOpHash: txn.userOpHash,
-                      status: txn.success === true ? 'successful' : 'failed',
-                      ownerApproved: true,
-                      hash: txn.receipt.transactionHash,
-                    },
-                  );
-
-                  await this.sendTransactionReceipt(
-                    msg.chat.id,
-                    {
-                      transactionHash: txn.receipt.transactionHash,
-                      status: txn.success === true ? 1 : 0,
-                    },
-                    `₦${transaction!.airtimeAmount} Airtime purchase for ${transaction!.airtimeDataNumber} `,
-                  );
-                  break;
                 } else {
                   txn = await this.walletService.transferEth(
                     walletDetail.privateKey,
                     process.env.ADMIN_WALLET!,
                     Number(transaction!.amount),
                   );
-                  console.log(txn);
-                  receipt = await txn.wait();
-                  console.log(receipt);
-                  if (receipt.status == 1) {
-                    // buy airtime
-                    const airtime = await this.billsService.buyAirtime(
-                      `${transaction!.airtimeDataNumber}`,
-                      `${transaction!.airtimeAmount}`,
-                    );
-                    if (airtime) {
-                      //update transaction
-
-                      console.log('paid airtime', airtime);
-                      await this.TransactionModel.updateOne(
-                        { _id: transaction!._id },
-                        {
-                          flutterWave_status: airtime.status,
-                          flutterWave_reference: airtime.data.reference,
-                          flutterWave_tx_ref: airtime.data.tx_ref,
-                          flutterWave_bill_Network: airtime.data.network,
-                        },
-                      );
-                    }
-                  }
-
-                  //update transaction
-                  await this.TransactionModel.updateOne(
-                    { _id: transaction!._id },
-                    {
-                      status: receipt.status === 0 ? 'failed' : 'successful',
-                      ownerApproved: true,
-                      hash: receipt.transactionHash,
-                    },
-                  );
-
-                  await this.sendTransactionReceipt(
-                    msg.chat.id,
-                    receipt,
-                    `₦${transaction!.airtimeAmount} Airtime purchase for ${transaction!.airtimeDataNumber} `,
-                  );
-                  break;
+                  txn = await txn.wait(); // Wait for the transaction to complete
                 }
+                break;
 
               case 'USDC':
                 if (user?.WalletType === 'SMART') {
                   txn =
                     await this.contractInteractionService.executeTransferErc20Transaction(
                       walletDetail.privateKey as `0x${string}`,
-                      process.env.USDC_ADDRESS as `0x${string}`,
+                      USDC_ADDRESS as `0x${string}`,
                       process.env.ADMIN_WALLET as `0x${string}`,
                       Number(transaction!.amount),
                       6,
                     );
-                  console.log(txn);
-
-                  if (txn.success === true) {
-                    // buy airtime
-                    const airtime = await this.billsService.buyAirtime(
-                      `${transaction!.airtimeDataNumber}`,
-                      `${transaction!.airtimeAmount}`,
-                    );
-                    if (airtime) {
-                      //update transaction
-                      await this.TransactionModel.updateOne(
-                        { _id: transaction!._id },
-                        {
-                          flutterWave_status: airtime.status,
-                          flutterWave_reference: airtime.data.reference,
-                          flutterWave_tx_ref: airtime.data.tx_ref,
-                          flutterWave_bill_Network: airtime.data.network,
-                        },
-                      );
-                    }
-                  }
-
-                  //update transaction
-                  await this.TransactionModel.updateOne(
-                    { _id: transaction!._id },
-                    {
-                      userOpHash: txn.userOpHash,
-                      status: txn.success === true ? 'successful' : 'failed',
-                      ownerApproved: true,
-                      hash: txn.receipt.transactionHash,
-                    },
-                  );
-
-                  await this.sendTransactionReceipt(
-                    msg.chat.id,
-                    {
-                      transactionHash: txn.receipt.transactionHash,
-                      status: txn.success === true ? 1 : 0,
-                    },
-                    `₦${transaction!.airtimeAmount} Airtime purchase for ${transaction!.airtimeDataNumber} `,
-                  );
-                  break;
                 } else {
                   txn = await this.walletService.transferUSDC(
                     walletDetail.privateKey,
                     process.env.ADMIN_WALLET!,
                     Number(transaction!.amount),
                   );
-                  console.log(txn);
-                  receipt = await txn.wait();
-                  console.log(receipt);
-                  if (receipt.status == 1) {
-                    // buy airtime
-                    const airtime = await this.billsService.buyAirtime(
-                      `${transaction!.airtimeDataNumber}`,
-                      `${transaction!.airtimeAmount}`,
-                    );
-                    if (airtime) {
-                      //update transaction
-                      await this.TransactionModel.updateOne(
-                        { _id: transaction!._id },
-                        {
-                          flutterWave_status: airtime.status,
-                          flutterWave_reference: airtime.data.reference,
-                          flutterWave_tx_ref: airtime.data.tx_ref,
-                          flutterWave_bill_Network: airtime.data.network,
-                        },
-                      );
-                    }
-                  }
-
-                  //update transaction
-                  await this.TransactionModel.updateOne(
-                    { _id: transaction!._id },
-                    {
-                      status: receipt.status === 0 ? 'failed' : 'successful',
-                      ownerApproved: true,
-                      hash: receipt.transactionHash,
-                    },
-                  );
-
-                  await this.sendTransactionReceipt(
-                    msg.chat.id,
-                    receipt,
-                    `₦${transaction!.airtimeAmount} Airtime purchase for ${transaction!.airtimeDataNumber} `,
-                  );
-                  break;
+                  txn = await txn.wait(); // Wait for the transaction to complete
                 }
-
+                break;
               case 'DAI':
                 if (user?.WalletType === 'SMART') {
                   txn =
                     await this.contractInteractionService.executeTransferErc20Transaction(
                       walletDetail.privateKey as `0x${string}`,
-                      process.env.DAI_ADDRESS as `0x${string}`,
+                      DAI_ADDRESS as `0x${string}`,
                       process.env.ADMIN_WALLET as `0x${string}`,
                       Number(transaction!.amount),
                       6,
                     );
-                  console.log(txn);
-                  console.log(receipt);
-
-                  if (txn.success === true) {
-                    // buy airtime
-                    const airtime = await this.billsService.buyAirtime(
-                      `${transaction!.airtimeDataNumber}`,
-                      `${transaction!.airtimeAmount}`,
-                    );
-                    if (airtime) {
-                      //update transaction
-                      await this.TransactionModel.updateOne(
-                        { _id: transaction!._id },
-                        {
-                          flutterWave_status: airtime.status,
-                          flutterWave_reference: airtime.data.reference,
-                          flutterWave_tx_ref: airtime.data.tx_ref,
-                          flutterWave_bill_Network: airtime.data.network,
-                        },
-                      );
-                    }
-                  }
-
-                  //update transaction
-                  await this.TransactionModel.updateOne(
-                    { _id: transaction!._id },
-                    {
-                      userOpHash: txn.userOpHash,
-                      status: txn.success === true ? 'successful' : 'failed',
-                      ownerApproved: true,
-                      hash: receipt.transactionHash,
-                    },
-                  );
-
-                  await this.sendTransactionReceipt(
-                    msg.chat.id,
-                    {
-                      transactionHash: txn.receipt.transactionHash,
-                      status: txn.success === true ? 1 : 0,
-                    },
-                    `₦${transaction!.airtimeAmount} Airtime purchase for ${transaction!.airtimeDataNumber} `,
-                  );
-                  break;
                 } else {
                   txn = await this.walletService.transferDAI(
                     walletDetail.privateKey,
                     process.env.ADMIN_WALLET!,
                     Number(transaction!.amount),
                   );
-                  console.log(txn);
-                  receipt = await txn.wait();
-                  console.log(receipt);
-                  if (receipt.status == 1) {
-                    // buy airtime
-                    const airtime = await this.billsService.buyAirtime(
-                      `${transaction!.airtimeDataNumber}`,
-                      `${transaction!.airtimeAmount}`,
-                    );
-                    if (airtime) {
-                      //update transaction
-                      await this.TransactionModel.updateOne(
-                        { _id: transaction!._id },
-                        {
-                          flutterWave_status: airtime.status,
-                          flutterWave_reference: airtime.data.reference,
-                          flutterWave_tx_ref: airtime.data.tx_ref,
-                          flutterWave_bill_Network: airtime.data.network,
-                        },
-                      );
-                    }
-                  }
+                  txn = await txn.wait(); // Wait for the transaction to complete
+                }
+                break;
 
+              default:
+                throw new Error('Unsupported token type');
+            }
+
+            // Handle airtime purchase and transaction update based on success
+            const buyAirtime = async (status: boolean, hash: string) => {
+              const statusFlag = status ? 1 : 0;
+
+              if (statusFlag === 1) {
+                const airtime = await this.billsService.buyAirtime(
+                  `${transaction!.airtimeDataNumber}`,
+                  `${transaction!.airtimeAmount}`,
+                );
+                if (airtime) {
                   //update transaction
+
+                  console.log('paid airtime', airtime);
+                  // Update transaction details
                   await this.TransactionModel.updateOne(
                     { _id: transaction!._id },
                     {
-                      status: receipt.status === 0 ? 'failed' : 'successful',
+                      flutterWave_status: airtime?.status,
+                      flutterWave_reference: airtime?.data.reference,
+                      flutterWave_tx_ref: airtime?.data.tx_ref,
+                      flutterWave_bill_Network: airtime?.data.network,
+                      userOpHash: txn.userOpHash,
+                      status: 'successful',
                       ownerApproved: true,
-                      hash: txn.receipt.transactionHash,
+                      hash: hash,
                     },
                   );
 
                   await this.sendTransactionReceipt(
                     msg.chat.id,
-                    receipt,
-                    `₦${transaction!.airtimeAmount} Airtime purchase for ${transaction!.airtimeDataNumber} `,
+                    { transactionHash: hash, status: statusFlag },
+                    `₦${transaction!.airtimeAmount} Airtime purchase for ${transaction!.airtimeDataNumber}`,
                   );
-                  break;
                 }
+              }
+            };
 
-              default:
-                break;
+            if (txn.success === true) {
+              const airtime = await this.billsService.buyAirtime(
+                `${transaction!.airtimeDataNumber}`,
+                `${transaction!.airtimeAmount}`,
+              );
+
+              // Send transaction receipt
+              await this.sendTransactionReceipt(
+                msg.chat.id,
+                {
+                  transactionHash: txn.receipt.transactionHash,
+                  status: 1,
+                },
+                `₦${transaction!.airtimeAmount} Airtime purchase for ${transaction!.airtimeDataNumber}`,
+              );
+            } else {
+              // Update transaction status if the transaction failed
+              await this.TransactionModel.updateOne(
+                { _id: transaction!._id },
+                {
+                  userOpHash: txn.userOpHash,
+                  status: 'failed',
+                  hash: txn.receipt.transactionHash,
+                },
+              );
+
+              await this.egoBloxBot.sendMessage(
+                msg.chat.id,
+                'Transaction failed. Please try again.',
+              );
             }
 
-            const promises: any[] = [];
+            // Cleanup session
             const latestSession = await this.SessionModel.findOne({
               chat_id: msg.chat.id,
             });
-            console.log('latest session', latestSession);
-            // loop through pin prompt to delete them
-            for (
-              let i = 0;
-              i < latestSession!.walletPinPromptInputId.length;
-              i++
-            ) {
-              try {
+            if (latestSession) {
+              const promises: any[] = [];
+              for (const msgId of latestSession.walletPinPromptInputId) {
                 promises.push(
-                  await this.egoBloxBot.deleteMessage(
-                    msg.chat.id,
-                    latestSession!.walletPinPromptInputId[i],
-                  ),
+                  this.egoBloxBot.deleteMessage(msg.chat.id, msgId),
                 );
-              } catch (error) {
-                console.log(error);
               }
-            }
-            // loop through to delete all userReply
-            for (let i = 0; i < latestSession!.userInputId.length; i++) {
-              try {
+              for (const msgId of latestSession.userInputId) {
                 promises.push(
-                  await this.egoBloxBot.deleteMessage(
-                    msg.chat.id,
-                    latestSession!.userInputId[i],
-                  ),
+                  this.egoBloxBot.deleteMessage(msg.chat.id, msgId),
                 );
-              } catch (error) {
-                console.log(error);
               }
+              await Promise.all(promises); // Wait for all delete operations to complete
+              await this.SessionModel.deleteMany({ chat_id: msg.chat.id });
             }
-            // delete all session
-            await this.SessionModel.deleteMany({ chat_id: msg.chat.id });
-          } else {
-            return await this.egoBloxBot.sendMessage(
+          } catch (error) {
+            console.error('Error processing transaction:', error);
+            await this.egoBloxBot.sendMessage(
               msg.chat.id,
-              `Processing command failed, Invalid pin`,
+              'An error occurred while processing your request.',
             );
           }
         }
@@ -1174,6 +894,7 @@ export class BotService {
           session.importWallet &&
           session.importWalletPromptInput
         ) {
+          await this.egoBloxBot.sendChatAction(msg.chat.id, 'typing');
           if (await this.isPrivateKey(msg.text!.trim(), msg.chat.id)) {
             const privateKey = msg.text!.trim();
             console.log(privateKey);
@@ -1232,6 +953,7 @@ export class BotService {
         }
         // detect send action
         else if (matchedSend) {
+          await this.egoBloxBot.sendChatAction(msg.chat.id, 'typing');
           let receiverAddress: string;
           let receiver_chatId;
           if (matchedSend.walletType === 'ens') {
@@ -1273,6 +995,7 @@ export class BotService {
         }
         // detect buy airtime action
         else if (matchBuyAirtime) {
+          await this.egoBloxBot.sendChatAction(msg.chat.id, 'typing');
           const rateAmount = (() => {
             const { token, amount } = matchBuyAirtime;
             const rates = {
@@ -1537,6 +1260,12 @@ export class BotService {
           return this.showBalance(chatId);
 
         case '/exportWallet':
+          if (user!.WalletType === 'SMART') {
+            return this.egoBloxBot.sendMessage(
+              chatId,
+              `You can't export a smart account wallet`,
+            );
+          }
           return this.showExportWalletWarning(chatId);
 
         case '/confirmExportWallet':
@@ -1605,6 +1334,7 @@ export class BotService {
 
   sendAllFeature = async (chatId: any) => {
     try {
+      await this.egoBloxBot.sendChatAction(chatId, 'typing');
       const allFeatures = await allFeaturesMarkup();
       if (allFeatures) {
         const replyMarkup = {
@@ -1622,6 +1352,7 @@ export class BotService {
 
   sendAllFeatureKeyboard = async (chatId: any) => {
     try {
+      await this.egoBloxBot.sendChatAction(chatId, 'typing');
       // Define the one-time keyboard layout
       const options: TelegramBot.SendMessageOptions = {
         parse_mode: 'HTML',
@@ -1642,6 +1373,7 @@ export class BotService {
 
   sendBillsMarkup = async (chatId: any) => {
     try {
+      await this.egoBloxBot.sendChatAction(chatId, 'typing');
       const allBills = await showBillsMarkup();
       if (allBills) {
         const replyMarkup = {
@@ -1659,6 +1391,7 @@ export class BotService {
 
   sendAllWalletFeature = async (chatId: any) => {
     try {
+      await this.egoBloxBot.sendChatAction(chatId, 'typing');
       const allWalletFeatures = await walletFeaturesMarkup();
       if (allWalletFeatures) {
         const replyMarkup = {
@@ -1676,6 +1409,7 @@ export class BotService {
 
   sendSelectWalletTypeMarkup = async (chatId: any) => {
     try {
+      await this.egoBloxBot.sendChatAction(chatId, 'typing');
       const walletType = await selectWalletTypeMarkup();
       if (walletType) {
         const replyMarkup = {
@@ -1693,6 +1427,7 @@ export class BotService {
 
   promptWalletPin = async (chatId: TelegramBot.ChatId, context?: string) => {
     try {
+      await this.egoBloxBot.sendChatAction(chatId, 'typing');
       if (context === 'create') {
         const pinPromptId = await this.egoBloxBot.sendMessage(
           chatId,
@@ -1735,6 +1470,7 @@ export class BotService {
 
   promptWalletPrivateKEY = async (chatId: TelegramBot.ChatId) => {
     try {
+      await this.egoBloxBot.sendChatAction(chatId, 'typing');
       const privateKeyPromptId = await this.egoBloxBot.sendMessage(
         chatId,
         `Please enter wallet's private key`,
@@ -1760,6 +1496,7 @@ export class BotService {
 
   promptSendToken = async (chatId: TelegramBot.ChatId) => {
     try {
+      await this.egoBloxBot.sendChatAction(chatId, 'typing');
       await this.egoBloxBot.sendMessage(
         chatId,
         `to send token use this format:\n/send amount token address or basename or telegram Username\n e.g:\n\n/send 0.5 ETH ekete.base.eth\n/send 0.5 ETH @eketeUg\n/send 0.5 ETH 0x2189878C4963B84Fd737640db71D7650214c4A18`,
@@ -1777,6 +1514,7 @@ export class BotService {
 
   promptBuyAirtime = async (chatId: TelegramBot.ChatId) => {
     try {
+      await this.egoBloxBot.sendChatAction(chatId, 'typing');
       await this.egoBloxBot.sendMessage(
         chatId,
         `to buy airtime use this format:\n/airtime amount phone_number token(token you want to use and buy the airtime)\n e.g:\n\n/airtime 100 07064350087 ETH`,
@@ -1822,6 +1560,7 @@ export class BotService {
 
   showBalance = async (chatId: TelegramBot.ChatId) => {
     try {
+      await this.egoBloxBot.sendChatAction(chatId, 'typing');
       const user = await this.UserModel.findOne({ chat_id: chatId });
       if (!user?.smartWalletAddress && !user?.walletAddress) {
         return this.egoBloxBot.sendMessage(
@@ -1840,11 +1579,11 @@ export class BotService {
           );
           usdcBalance = await this.walletService.getERC20Balance(
             user!.walletAddress,
-            process.env.USDC_ADDRESS!,
+            USDC_ADDRESS!,
           );
           daiBalance = await this.walletService.getERC20Balance(
             user!.walletAddress,
-            process.env.DAI_ADDRESS!,
+            DAI_ADDRESS!,
           );
           break;
 
@@ -1854,11 +1593,11 @@ export class BotService {
           );
           usdcBalance = await this.walletService.getERC20Balance(
             user!.smartWalletAddress,
-            process.env.USDC_ADDRESS!,
+            USDC_ADDRESS!,
           );
           daiBalance = await this.walletService.getERC20Balance(
             user!.smartWalletAddress,
-            process.env.DAI_ADDRESS!,
+            DAI_ADDRESS!,
           );
           break;
 
@@ -1886,6 +1625,7 @@ export class BotService {
 
   showExportWalletWarning = async (chatId: TelegramBot.ChatId) => {
     try {
+      await this.egoBloxBot.sendChatAction(chatId, 'typing');
       const showExportWarning = await exportWalletWarningMarkup();
       if (showExportWarning) {
         const replyMarkup = { inline_keyboard: showExportWarning.keyboard };
@@ -1909,6 +1649,7 @@ export class BotService {
     privateKey: string,
   ) => {
     try {
+      await this.egoBloxBot.sendChatAction(chatId, 'typing');
       const displayPrivateKey = await displayPrivateKeyMarkup(privateKey);
       if (displayPrivateKey) {
         const replyMarkup = { inline_keyboard: displayPrivateKey.keyboard };
@@ -1943,6 +1684,7 @@ export class BotService {
 
   walletPinPrompt = async (chatId: TelegramBot.ChatId) => {
     try {
+      await this.egoBloxBot.sendChatAction(chatId, 'typing');
       const session = await this.SessionModel.findOne({ chat_id: chatId });
       const walletPinPromptId = await this.egoBloxBot.sendMessage(
         chatId,
@@ -1979,17 +1721,18 @@ export class BotService {
     transaction?: TransactionDocument,
   ) => {
     try {
+      await this.egoBloxBot.sendChatAction(chatId, 'typing');
       // check balance
       const ethBalance = await this.walletService.getEthBalance(
         transaction!.sender,
       );
       const usdcBalance = await this.walletService.getERC20Balance(
         transaction!.sender,
-        process.env.USDC_ADDRESS!,
+        USDC_ADDRESS!,
       );
       const daiBalance = await this.walletService.getERC20Balance(
         transaction!.sender,
-        process.env.DAI_ADDRESS!,
+        DAI_ADDRESS!,
       );
       if (
         transaction!.token === 'ETH' &&
@@ -2047,17 +1790,18 @@ export class BotService {
     transaction?: TransactionDocument,
   ) => {
     try {
+      await this.egoBloxBot.sendChatAction(chatId, 'typing');
       // check balance
       const ethBalance = await this.walletService.getEthBalance(
         transaction!.sender,
       );
       const usdcBalance = await this.walletService.getERC20Balance(
         transaction!.sender,
-        process.env.USDC_ADDRESS!,
+        USDC_ADDRESS!,
       );
       const daiBalance = await this.walletService.getERC20Balance(
         transaction!.sender,
-        process.env.DAI_ADDRESS!,
+        DAI_ADDRESS!,
       );
       if (
         transaction!.token === 'ETH' &&
@@ -2112,6 +1856,7 @@ export class BotService {
 
   showResetWalletWarning = async (chatId: TelegramBot.ChatId) => {
     try {
+      await this.egoBloxBot.sendChatAction(chatId, 'typing');
       const showResetWarning = await resetWalletWarningMarkup();
       if (showResetWarning) {
         const replyMarkup = { inline_keyboard: showResetWarning.keyboard };
@@ -2136,6 +1881,7 @@ export class BotService {
     description?: any,
   ) => {
     try {
+      await this.egoBloxBot.sendChatAction(chatId, 'typing');
       const receipt = await transactionReceiptMarkup(
         transactionReceipt,
         description,
@@ -2177,6 +1923,36 @@ export class BotService {
       console.log(error);
     }
   };
+
+  // Functions to handle specific transaction types
+  async handleSmartWalletTransaction(transaction, walletDetail) {
+    switch (transaction.token) {
+      case 'ETH':
+        return await this.contractInteractionService.executeEthTransferTransaction(
+          walletDetail.privateKey,
+          process.env.ADMIN_WALLET! as `0x${string}`,
+          Number(transaction.amount),
+        );
+      case 'USDC':
+        return await this.contractInteractionService.executeTransferErc20Transaction(
+          walletDetail.privateKey,
+          USDC_ADDRESS as `0x${string}`,
+          process.env.ADMIN_WALLET! as `0x${string}`,
+          Number(transaction.amount),
+          6,
+        );
+      case 'DAI':
+        return await this.contractInteractionService.executeTransferErc20Transaction(
+          walletDetail.privateKey,
+          DAI_ADDRESS as `0x${string}`,
+          process.env.ADMIN_WALLET! as `0x${string}`,
+          Number(transaction.amount),
+          6,
+        );
+      default:
+        throw new Error('Unsupported token type');
+    }
+  }
 
   // utitlity functions
   isPrivateKey = async (input: string, chatId: number): Promise<boolean> => {
