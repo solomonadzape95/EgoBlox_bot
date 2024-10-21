@@ -9,6 +9,9 @@ export class Transaction {
   hash: string;
 
   @Prop()
+  userOpHash: string;
+
+  @Prop()
   status: string;
 
   @Prop({ enum: ['SEND', 'AIRTIME', 'DATA', 'ELECTRICITY'], required: true })
@@ -52,6 +55,9 @@ export class Transaction {
 
   @Prop()
   receiverAddress: string;
+
+  @Prop()
+  receiverChatId: number;
 
   @Prop()
   sender: string;

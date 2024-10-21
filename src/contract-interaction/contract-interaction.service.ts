@@ -96,7 +96,11 @@ export class ContractInteractionService {
 
   // execute eth transfer
   // Execute ETH transfer transaction
-  async executeEthTransferTransaction(privateKey: `0x${string}`) {
+  async executeEthTransferTransaction(
+    privateKey: `0x${string}`,
+    receiver: `0x${string}`,
+    amount: number,
+  ) {
     try {
       // Step 1: Get the user's account from the private key
       const userAccount = await this.getAccount(privateKey);
@@ -110,8 +114,8 @@ export class ContractInteractionService {
         abi: egoBloxAbi,
         functionName: 'transferETH',
         to: EGOBLOX_ADDRESS,
-        args: [`0xcA4aC4b48b15998C0315B2043e7f66C5383dC8E7`],
-        value: 0.0002 * 10 ** 18, // Amount in ETH (converted to wei)
+        args: [receiver],
+        value: amount * 10 ** 18, // Amount in ETH (converted to wei)
       };
 
       // Step 4: Assign the gas estimation logic
@@ -131,9 +135,8 @@ export class ContractInteractionService {
       const receipt = await bundlerClient.waitForUserOperationReceipt({
         hash: userOpHash,
       });
-
-      // Step 7: Log the transaction success
-      this.logTransactionSuccess(receipt.userOpHash, userAccount.address);
+      console.log('Transaction receipt :', receipt);
+      return receipt;
     } catch (error) {
       console.error('Error sending transaction: ', error);
       process.exit(1);
@@ -141,7 +144,13 @@ export class ContractInteractionService {
   }
 
   // Execute the erc20 token transfer
-  async executeTransferErc20Transaction(privateKey: `0x${string}`) {
+  async executeTransferErc20Transaction(
+    privateKey: `0x${string}`,
+    tokenAddress: `0x${string}`,
+    receiver: `0x${string}`,
+    amount: number,
+    decimals: number,
+  ) {
     try {
       const userAccount = await this.getAccount(privateKey);
       console.log('this is address:', userAccount.address);
@@ -150,8 +159,8 @@ export class ContractInteractionService {
       const transferCall: any = {
         abi: erc20Abi,
         functionName: 'transfer',
-        to: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`,
-        args: [`0xCe5333e65Ee7DA869D48BB9EE2A2Dc1892A917B0`, 0.99999 * 10 ** 6],
+        to: tokenAddress,
+        args: [receiver, amount * 10 ** decimals],
       };
 
       userAccount.userOperation = {
@@ -166,11 +175,12 @@ export class ContractInteractionService {
         paymaster: true,
       });
 
+      // Step 6: Wait for the transaction receipt
       const receipt = await bundlerClient.waitForUserOperationReceipt({
         hash: userOpHash,
       });
-
-      this.logTransactionSuccess(receipt.userOpHash, userAccount.address);
+      console.log('Transaction receipt :', receipt);
+      return receipt;
     } catch (error) {
       console.error('Error sending transaction: ', error);
       process.exit(1);
