@@ -57,8 +57,7 @@ export class Transaction {
   receiverAddress: string;
 
   @Prop()
-  receiverChatId: number;
-
+  receiverChatId: string;
   @Prop()
   sender: string;
 

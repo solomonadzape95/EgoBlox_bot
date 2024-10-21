@@ -12,6 +12,7 @@ import {
   transactionReceiptMarkup,
   showBillsMarkup,
   selectWalletTypeMarkup,
+  notifyReceiverMarkup,
 } from './markups';
 import { InjectModel } from '@nestjs/mongoose';
 import { User } from 'src/database/schemas/user.schema';
@@ -536,7 +537,16 @@ export class BotService {
                       hash: txn.receipt.transactionHash,
                     },
                   );
-
+                  if (transaction?.receiverChatId) {
+                    await this.notifyReceiver(
+                      transaction?.receiverChatId,
+                      {
+                        transactionHash: txn.receipt.transactionHash,
+                        status: txn.success === true ? 1 : 0,
+                      },
+                      `Received ${transaction!.amount} ${transaction!.token} from @${user.username}`,
+                    );
+                  }
                   await this.sendTransactionReceipt(
                     msg.chat.id,
                     {
@@ -567,11 +577,19 @@ export class BotService {
                     },
                   );
 
+                  if (transaction?.receiverChatId) {
+                    await this.notifyReceiver(
+                      transaction?.receiverChatId,
+                      receipt,
+                      `Received ${transaction!.amount} ${transaction!.token} from @${user?.username}`,
+                    );
+                  }
                   await this.sendTransactionReceipt(
                     msg.chat.id,
                     receipt,
                     `Transfer of ${transaction!.amount} ${transaction!.token} to ${transaction!.receiver}`,
                   );
+
                   break;
                 }
 
@@ -604,8 +622,18 @@ export class BotService {
                       transactionHash: txn.receipt.transactionHash,
                       status: txn.success === true ? 1 : 0,
                     },
-                    `Transfer of ${transaction!.amount} ${transaction!.token} to ${transaction!.receiver}`,
+                    `Transfer of ${transaction!.amount} ${transaction!.token} to @${user.username}`,
                   );
+                  if (transaction?.receiverChatId) {
+                    await this.notifyReceiver(
+                      transaction?.receiverChatId,
+                      {
+                        transactionHash: txn.receipt.transactionHash,
+                        status: txn.success === true ? 1 : 0,
+                      },
+                      `Received ${transaction!.amount} ${transaction!.token} from @${user.username}`,
+                    );
+                  }
                   break;
                 } else {
                   txn = await this.walletService.transferUSDC(
@@ -631,6 +659,13 @@ export class BotService {
                     receipt,
                     `Transfer of ${transaction!.amount} ${transaction!.token} to ${transaction!.receiver}`,
                   );
+                  if (transaction?.receiverChatId) {
+                    await this.notifyReceiver(
+                      transaction?.receiverChatId,
+                      receipt,
+                      `Received ${transaction!.amount} ${transaction!.token} from @${user?.username}`,
+                    );
+                  }
 
                   break;
                 }
@@ -666,6 +701,17 @@ export class BotService {
                     },
                     `Transfer of ${transaction!.amount} ${transaction!.token} to ${transaction!.receiver}`,
                   );
+                  if (transaction?.receiverChatId) {
+                    await this.notifyReceiver(
+                      transaction?.receiverChatId,
+                      {
+                        transactionHash: txn.receipt.transactionHash,
+                        status: txn.success === true ? 1 : 0,
+                      },
+                      `Received ${transaction!.amount} ${transaction!.token} from @${user.username}`,
+                    );
+                  }
+
                   break;
                 } else {
                   txn = await this.walletService.transferDAI(
@@ -691,6 +737,15 @@ export class BotService {
                     receipt,
                     `Transfer of ${transaction!.amount} ${transaction!.token} to ${transaction!.receiver}`,
                   );
+
+                  if (transaction?.receiverChatId) {
+                    await this.notifyReceiver(
+                      transaction?.receiverChatId,
+                      receipt,
+                      `Received ${transaction!.amount} ${transaction!.token} from @${user?.username}`,
+                    );
+                  }
+
                   break;
                 }
 
@@ -1178,12 +1233,14 @@ export class BotService {
         // detect send action
         else if (matchedSend) {
           let receiverAddress: string;
+          let receiver_chatId;
           if (matchedSend.walletType === 'ens') {
             receiverAddress = await this.getAddress(matchedSend.receiver);
           } else if (matchedSend.walletType === 'username') {
             const receiver = await this.UserModel.findOne({
               username: matchedSend.receiver,
             });
+            receiver_chatId = receiver?.chat_id;
             if (receiver?.WalletType === 'SMART') {
               receiverAddress = receiver!.smartWalletAddress;
             } else {
@@ -1201,10 +1258,11 @@ export class BotService {
                 ? user?.smartWalletAddress
                 : user!.walletAddress,
             receiver: matchedSend.receiver,
-            type: 'SEND',
+            receiverChatId: receiver_chatId,
             ownerApproved: false,
             receiverType: matchedSend.walletType,
             receiverAddress,
+            type: 'SEND',
           });
           if (transaction) {
             return await this.sendTokenWalletPinPrompt(
@@ -2073,6 +2131,30 @@ export class BotService {
   ) => {
     try {
       const receipt = await transactionReceiptMarkup(
+        transactionReceipt,
+        description,
+      );
+      if (receipt) {
+        const replyMarkup = {
+          inline_keyboard: receipt.keyboard,
+        };
+        await this.egoBloxBot.sendMessage(chatId, receipt.message, {
+          parse_mode: 'HTML',
+          reply_markup: replyMarkup,
+        });
+      }
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
+  notifyReceiver = async (
+    chatId: any,
+    transactionReceipt: any,
+    description?: any,
+  ) => {
+    try {
+      const receipt = await notifyReceiverMarkup(
         transactionReceipt,
         description,
       );
