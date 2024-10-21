@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { abi } from './utils/abi';
 import { erc20Abi } from './utils/erc20Abi';
 import { egoBloxAbi } from './utils/egoBloxAbi';
 import {
@@ -9,15 +8,12 @@ import {
 import { http, createPublicClient } from 'viem';
 import { baseSepolia } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
+import * as dotenv from 'dotenv';
+dotenv.config();
 
-// const RPC_URL =
-//   'https://api.developer.coinbase.com/rpc/v1/base-sepolia/Y3cqPVNjohH5-Cgg_veLfU4qfsgY5kix';
+const RPC_URL = process.env.PAYMASTER_RPC_URL;
 
-const RPC_URL =
-  'https://api.developer.coinbase.com/rpc/v1/base-sepolia/EGY1etgHHkQgIMQlJrAw95c6RlQ3Xhlw';
-
-const NFT_CONTRACT_ADDRESS = '0x66519FCAee1Ed65bc9e0aCc25cCD900668D3eD49';
-const EGOBLOX_ADDRESS = '0xb0cfc25ebcb215759b0f30f1affe35d8b0bdede9';
+const EGOBLOX_ADDRESS = process.env.EGOBLOX_ADDRESS;
 
 const publicClient = createPublicClient({
   chain: baseSepolia,
@@ -28,7 +24,6 @@ const publicClient = createPublicClient({
 export class ContractInteractionService {
   // Get account based on private key
   async getAccount(privateKey: `0x${string}`) {
-    console.log('I am here', privateKey);
     const owner = privateKeyToAccount(privateKey);
     console.log(owner);
 
@@ -57,45 +52,7 @@ export class ContractInteractionService {
     return estimate;
   }
 
-  // Execute the mintTo function on the NFT contract
-  async executeMintTransaction(privateKey: `0x${string}`) {
-    try {
-      const userAccount = await this.getAccount(privateKey);
-      console.log('this is address:', userAccount.address);
-      const bundlerClient = await this.getBundlerClient(privateKey);
-
-      const mintToCall: any = {
-        abi: abi,
-        functionName: 'mintTo',
-        to: NFT_CONTRACT_ADDRESS,
-        args: [userAccount.address, 1],
-      };
-
-      userAccount.userOperation = {
-        estimateGas: (userOperation) =>
-          this.estimateGas(userOperation, bundlerClient),
-      };
-
-      // Sign and send the UserOperation
-      const userOpHash = await bundlerClient.sendUserOperation({
-        account: userAccount,
-        calls: [mintToCall],
-        paymaster: true,
-      });
-
-      const receipt = await bundlerClient.waitForUserOperationReceipt({
-        hash: userOpHash,
-      });
-
-      this.logTransactionSuccess(receipt.userOpHash, userAccount.address);
-    } catch (error) {
-      console.error('Error sending transaction: ', error);
-      process.exit(1);
-    }
-  }
-
   // execute eth transfer
-  // Execute ETH transfer transaction
   async executeEthTransferTransaction(
     privateKey: `0x${string}`,
     receiver: `0x${string}`,
@@ -188,14 +145,14 @@ export class ContractInteractionService {
   }
 
   // Log success message with relevant links
-  private logTransactionSuccess(userOpHash: string, userAddress: string) {
-    console.log('✅ Transaction successfully sponsored!');
-    console.log(
-      `⛽ View sponsored UserOperation on blockscout: https://base-sepolia.blockscout.com/op/${userOpHash}`,
-    );
-    console.log(
-      `🔍 View NFT mint on basescan: https://sepolia.basescan.org/address/${userAddress}`,
-    );
-    process.exit();
-  }
+  // private logTransactionSuccess(userOpHash: string, userAddress: string) {
+  //   console.log('✅ Transaction successfully sponsored!');
+  //   console.log(
+  //     `⛽ View sponsored UserOperation on blockscout: https://base-sepolia.blockscout.com/op/${userOpHash}`,
+  //   );
+  //   console.log(
+  //     `🔍 View NFT mint on basescan: https://sepolia.basescan.org/address/${userAddress}`,
+  //   );
+  //   process.exit();
+  // }
 }

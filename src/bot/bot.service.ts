@@ -28,7 +28,7 @@ import * as dotenv from 'dotenv';
 import { detectSendToken } from './utils/detectSendToken.utils';
 import { detectAirtime } from './utils/detectAirtime.utils';
 import { BillsService } from 'src/bills/bills.service';
-import { ContractInteractionService } from 'src/contract-interaction/contract-interaction.service';
+import { ContractInteractionService } from 'src/paymaster-contract-interaction/contract-interaction.service';
 
 // import { base, baseSepolia } from 'viem/chains';
 
