@@ -9,6 +9,7 @@ import { walletFeaturesMarkup } from './walletFeatures';
 import { transactionReceiptMarkup } from './transactionReceipt';
 import { showBillsMarkup } from './bills';
 import { selectWalletTypeMarkup } from './selectWalletType';
+import { notifyReceiverMarkup } from './notifyReceiver';
 
 export {
   welcomeMessageMarkup,
@@ -22,4 +23,5 @@ export {
   transactionReceiptMarkup,
   showBillsMarkup,
   selectWalletTypeMarkup,
+  notifyReceiverMarkup,
 };

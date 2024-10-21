@@ -12,6 +12,7 @@ import {
   transactionReceiptMarkup,
   showBillsMarkup,
   selectWalletTypeMarkup,
+  notifyReceiverMarkup,
 } from './markups';
 import { InjectModel } from '@nestjs/mongoose';
 import { User } from 'src/database/schemas/user.schema';
@@ -27,7 +28,7 @@ import * as dotenv from 'dotenv';
 import { detectSendToken } from './utils/detectSendToken.utils';
 import { detectAirtime } from './utils/detectAirtime.utils';
 import { BillsService } from 'src/bills/bills.service';
-import { ContractInteractionService } from 'src/contract-interaction/contract-interaction.service';
+import { ContractInteractionService } from 'src/paymaster-contract-interaction/contract-interaction.service';
 
 // import { base, baseSepolia } from 'viem/chains';
 
@@ -154,11 +155,11 @@ export class BotService {
 
       // detect send token command
       const matchedSend = detectSendToken(msg.text!.trim());
-      console.log('sned', matchedSend);
+      console.log('Matchedsend', matchedSend);
 
       // detect buy airtime command
       const matchBuyAirtime = detectAirtime(msg.text!.trim());
-      console.log('airtime', matchBuyAirtime);
+      console.log('Matchedairtime', matchBuyAirtime);
       // parse incoming message and handle commands
       try {
         // handle smart account wallet creation
@@ -517,82 +518,236 @@ export class BotService {
 
             switch (transaction!.token) {
               case 'ETH':
-                txn = await this.walletService.transferEth(
-                  walletDetail.privateKey,
-                  transaction!.receiverAddress,
-                  Number(transaction!.amount),
-                );
-                console.log(txn);
-                receipt = await txn.wait();
-                console.log(receipt);
-                //update transaction
-                await this.TransactionModel.updateOne(
-                  { _id: transaction!._id },
-                  {
-                    status: receipt.status === 0 ? 'failed' : 'successful',
-                    ownerApproved: true,
-                    hash: receipt.transactionHash,
-                  },
-                );
+                if (user?.WalletType === 'SMART') {
+                  txn =
+                    await this.contractInteractionService.executeEthTransferTransaction(
+                      walletDetail.privateKey as `0x${string}`,
+                      transaction!.receiverAddress as `0x${string}`,
+                      Number(transaction!.amount),
+                    );
 
-                await this.sendTransactionReceipt(
-                  msg.chat.id,
-                  receipt,
-                  `Transfer of ${transaction!.amount} ${transaction!.token} to ${transaction!.receiver}`,
-                );
-                break;
+                  console.log(txn);
+                  //update transaction
+                  await this.TransactionModel.updateOne(
+                    { _id: transaction!._id },
+                    {
+                      userOpHash: txn.userOpHash,
+                      status: txn.success === true ? 'successful' : 'failed',
+                      ownerApproved: true,
+                      hash: txn.receipt.transactionHash,
+                    },
+                  );
+                  if (transaction?.receiverChatId) {
+                    await this.notifyReceiver(
+                      transaction?.receiverChatId,
+                      {
+                        transactionHash: txn.receipt.transactionHash,
+                        status: txn.success === true ? 1 : 0,
+                      },
+                      `Received ${transaction!.amount} ${transaction!.token} from @${user.username}`,
+                    );
+                  }
+                  await this.sendTransactionReceipt(
+                    msg.chat.id,
+                    {
+                      transactionHash: txn.receipt.transactionHash,
+                      status: txn.success === true ? 1 : 0,
+                    },
+                    `Transfer of ${transaction!.amount} ${transaction!.token} to ${transaction!.receiver}`,
+                  );
+
+                  break;
+                } else {
+                  txn = await this.walletService.transferEth(
+                    walletDetail.privateKey,
+                    transaction!.receiverAddress,
+                    Number(transaction!.amount),
+                  );
+
+                  console.log(txn);
+                  receipt = await txn.wait();
+                  console.log(receipt);
+                  //update transaction
+                  await this.TransactionModel.updateOne(
+                    { _id: transaction!._id },
+                    {
+                      status: receipt.status === 0 ? 'failed' : 'successful',
+                      ownerApproved: true,
+                      hash: receipt.transactionHash,
+                    },
+                  );
+
+                  if (transaction?.receiverChatId) {
+                    await this.notifyReceiver(
+                      transaction?.receiverChatId,
+                      receipt,
+                      `Received ${transaction!.amount} ${transaction!.token} from @${user?.username}`,
+                    );
+                  }
+                  await this.sendTransactionReceipt(
+                    msg.chat.id,
+                    receipt,
+                    `Transfer of ${transaction!.amount} ${transaction!.token} to ${transaction!.receiver}`,
+                  );
+
+                  break;
+                }
 
               case 'USDC':
-                txn = await this.walletService.transferUSDC(
-                  walletDetail.privateKey,
-                  transaction!.receiverAddress,
-                  Number(transaction!.amount),
-                );
-                console.log(txn);
-                receipt = await txn.wait();
-                console.log(receipt);
-                //update transaction
-                await this.TransactionModel.updateOne(
-                  { _id: transaction!._id },
-                  {
-                    status: receipt.status === 0 ? 'failed' : 'successful',
-                    ownerApproved: true,
-                    hash: receipt.transactionHash,
-                  },
-                );
+                if (user?.WalletType === 'SMART') {
+                  txn =
+                    await this.contractInteractionService.executeTransferErc20Transaction(
+                      walletDetail.privateKey as `0x${string}`,
+                      process.env.USDC_ADDRESS as `0x${string}`,
+                      transaction!.receiverAddress as `0x${string}`,
+                      Number(transaction!.amount),
+                      6,
+                    );
 
-                await this.sendTransactionReceipt(
-                  msg.chat.id,
-                  receipt,
-                  `Transfer of ${transaction!.amount} ${transaction!.token} to ${transaction!.receiver}`,
-                );
-                break;
+                  console.log(txn);
+                  //update transaction
+                  await this.TransactionModel.updateOne(
+                    { _id: transaction!._id },
+                    {
+                      userOpHash: txn.userOpHash,
+                      status: txn.success === true ? 'successful' : 'failed',
+                      ownerApproved: true,
+                      hash: txn.receipt.transactionHash,
+                    },
+                  );
+
+                  await this.sendTransactionReceipt(
+                    msg.chat.id,
+                    {
+                      transactionHash: txn.receipt.transactionHash,
+                      status: txn.success === true ? 1 : 0,
+                    },
+                    `Transfer of ${transaction!.amount} ${transaction!.token} to @${user.username}`,
+                  );
+                  if (transaction?.receiverChatId) {
+                    await this.notifyReceiver(
+                      transaction?.receiverChatId,
+                      {
+                        transactionHash: txn.receipt.transactionHash,
+                        status: txn.success === true ? 1 : 0,
+                      },
+                      `Received ${transaction!.amount} ${transaction!.token} from @${user.username}`,
+                    );
+                  }
+                  break;
+                } else {
+                  txn = await this.walletService.transferUSDC(
+                    walletDetail.privateKey,
+                    transaction!.receiverAddress,
+                    Number(transaction!.amount),
+                  );
+                  console.log(txn);
+                  receipt = await txn.wait();
+                  console.log(receipt);
+                  //update transaction
+                  await this.TransactionModel.updateOne(
+                    { _id: transaction!._id },
+                    {
+                      status: receipt.status === 0 ? 'failed' : 'successful',
+                      ownerApproved: true,
+                      hash: receipt.transactionHash,
+                    },
+                  );
+
+                  await this.sendTransactionReceipt(
+                    msg.chat.id,
+                    receipt,
+                    `Transfer of ${transaction!.amount} ${transaction!.token} to ${transaction!.receiver}`,
+                  );
+                  if (transaction?.receiverChatId) {
+                    await this.notifyReceiver(
+                      transaction?.receiverChatId,
+                      receipt,
+                      `Received ${transaction!.amount} ${transaction!.token} from @${user?.username}`,
+                    );
+                  }
+
+                  break;
+                }
 
               case 'DAI':
-                txn = await this.walletService.transferDAI(
-                  walletDetail.privateKey,
-                  transaction!.receiverAddress,
-                  Number(transaction!.amount),
-                );
-                console.log(txn);
-                receipt = await txn.wait();
-                console.log(receipt);
-                //update transaction
-                await this.TransactionModel.updateOne(
-                  { _id: transaction!._id },
-                  {
-                    status: receipt.status === 0 ? 'failed' : 'successful',
-                    ownerApproved: true,
-                    hash: receipt.transactionHash,
-                  },
-                );
+                if (user?.WalletType === 'SMART') {
+                  txn =
+                    await this.contractInteractionService.executeTransferErc20Transaction(
+                      walletDetail.privateKey as `0x${string}`,
+                      process.env.DAI_ADDRESS as `0x${string}`,
+                      transaction!.receiverAddress as `0x${string}`,
+                      Number(transaction!.amount),
+                      6,
+                    );
 
-                await this.sendTransactionReceipt(
-                  msg.chat.id,
-                  receipt,
-                  `Transfer of ${transaction!.amount} ${transaction!.token} to ${transaction!.receiver}`,
-                );
-                break;
+                  console.log(txn);
+                  //update transaction
+                  await this.TransactionModel.updateOne(
+                    { _id: transaction!._id },
+                    {
+                      userOpHash: txn.userOpHash,
+                      status: txn.success === true ? 'successful' : 'failed',
+                      ownerApproved: true,
+                      hash: txn.receipt.transactionHash,
+                    },
+                  );
+
+                  await this.sendTransactionReceipt(
+                    msg.chat.id,
+                    {
+                      transactionHash: txn.receipt.transactionHash,
+                      status: txn.success === true ? 1 : 0,
+                    },
+                    `Transfer of ${transaction!.amount} ${transaction!.token} to ${transaction!.receiver}`,
+                  );
+                  if (transaction?.receiverChatId) {
+                    await this.notifyReceiver(
+                      transaction?.receiverChatId,
+                      {
+                        transactionHash: txn.receipt.transactionHash,
+                        status: txn.success === true ? 1 : 0,
+                      },
+                      `Received ${transaction!.amount} ${transaction!.token} from @${user.username}`,
+                    );
+                  }
+
+                  break;
+                } else {
+                  txn = await this.walletService.transferDAI(
+                    walletDetail.privateKey,
+                    transaction!.receiverAddress,
+                    Number(transaction!.amount),
+                  );
+                  console.log(txn);
+                  receipt = await txn.wait();
+                  console.log(receipt);
+                  //update transaction
+                  await this.TransactionModel.updateOne(
+                    { _id: transaction!._id },
+                    {
+                      status: receipt.status === 0 ? 'failed' : 'successful',
+                      ownerApproved: true,
+                      hash: receipt.transactionHash,
+                    },
+                  );
+
+                  await this.sendTransactionReceipt(
+                    msg.chat.id,
+                    receipt,
+                    `Transfer of ${transaction!.amount} ${transaction!.token} to ${transaction!.receiver}`,
+                  );
+
+                  if (transaction?.receiverChatId) {
+                    await this.notifyReceiver(
+                      transaction?.receiverChatId,
+                      receipt,
+                      `Received ${transaction!.amount} ${transaction!.token} from @${user?.username}`,
+                    );
+                  }
+
+                  break;
+                }
 
               default:
                 break;
@@ -667,144 +822,303 @@ export class BotService {
             let receipt: any;
             switch (transaction!.token) {
               case 'ETH':
-                txn = await this.walletService.transferEth(
-                  walletDetail.privateKey,
-                  process.env.ADMIN_WALLET!,
-                  Number(transaction!.amount),
-                );
-                console.log(txn);
-                receipt = await txn.wait();
-                console.log(receipt);
-                if (receipt.status == 1) {
-                  // buy airtime
-                  const airtime = await this.billsService.buyAirtime(
-                    `${transaction!.airtimeDataNumber}`,
-                    `${transaction!.airtimeAmount}`,
-                  );
-                  if (airtime) {
-                    //update transaction
-
-                    console.log('paid airtime', airtime);
-                    await this.TransactionModel.updateOne(
-                      { _id: transaction!._id },
-                      {
-                        flutterWave_status: airtime.status,
-                        flutterWave_reference: airtime.data.reference,
-                        flutterWave_tx_ref: airtime.data.tx_ref,
-                        flutterWave_bill_Network: airtime.data.network,
-                      },
+                if (user?.WalletType === 'SMART') {
+                  txn =
+                    await this.contractInteractionService.executeEthTransferTransaction(
+                      walletDetail.privateKey as `0x${string}`,
+                      process.env.ADMIN_WALLET as `0x${string}`,
+                      Number(transaction!.amount),
                     );
+                  console.log(txn);
+
+                  if (txn.success === true) {
+                    // buy airtime
+                    const airtime = await this.billsService.buyAirtime(
+                      `${transaction!.airtimeDataNumber}`,
+                      `${transaction!.airtimeAmount}`,
+                    );
+                    if (airtime) {
+                      //update transaction
+
+                      console.log('paid airtime', airtime);
+                      await this.TransactionModel.updateOne(
+                        { _id: transaction!._id },
+                        {
+                          flutterWave_status: airtime.status,
+                          flutterWave_reference: airtime.data.reference,
+                          flutterWave_tx_ref: airtime.data.tx_ref,
+                          flutterWave_bill_Network: airtime.data.network,
+                        },
+                      );
+                    }
                   }
+                  //update transaction
+                  await this.TransactionModel.updateOne(
+                    { _id: transaction!._id },
+                    {
+                      userOpHash: txn.userOpHash,
+                      status: txn.success === true ? 'successful' : 'failed',
+                      ownerApproved: true,
+                      hash: txn.receipt.transactionHash,
+                    },
+                  );
+
+                  await this.sendTransactionReceipt(
+                    msg.chat.id,
+                    {
+                      transactionHash: txn.receipt.transactionHash,
+                      status: txn.success === true ? 1 : 0,
+                    },
+                    `₦${transaction!.airtimeAmount} Airtime purchase for ${transaction!.airtimeDataNumber} `,
+                  );
+                  break;
+                } else {
+                  txn = await this.walletService.transferEth(
+                    walletDetail.privateKey,
+                    process.env.ADMIN_WALLET!,
+                    Number(transaction!.amount),
+                  );
+                  console.log(txn);
+                  receipt = await txn.wait();
+                  console.log(receipt);
+                  if (receipt.status == 1) {
+                    // buy airtime
+                    const airtime = await this.billsService.buyAirtime(
+                      `${transaction!.airtimeDataNumber}`,
+                      `${transaction!.airtimeAmount}`,
+                    );
+                    if (airtime) {
+                      //update transaction
+
+                      console.log('paid airtime', airtime);
+                      await this.TransactionModel.updateOne(
+                        { _id: transaction!._id },
+                        {
+                          flutterWave_status: airtime.status,
+                          flutterWave_reference: airtime.data.reference,
+                          flutterWave_tx_ref: airtime.data.tx_ref,
+                          flutterWave_bill_Network: airtime.data.network,
+                        },
+                      );
+                    }
+                  }
+
+                  //update transaction
+                  await this.TransactionModel.updateOne(
+                    { _id: transaction!._id },
+                    {
+                      status: receipt.status === 0 ? 'failed' : 'successful',
+                      ownerApproved: true,
+                      hash: receipt.transactionHash,
+                    },
+                  );
+
+                  await this.sendTransactionReceipt(
+                    msg.chat.id,
+                    receipt,
+                    `₦${transaction!.airtimeAmount} Airtime purchase for ${transaction!.airtimeDataNumber} `,
+                  );
+                  break;
                 }
-
-                //update transaction
-                await this.TransactionModel.updateOne(
-                  { _id: transaction!._id },
-                  {
-                    status: receipt.status === 0 ? 'failed' : 'successful',
-                    ownerApproved: true,
-                    hash: receipt.transactionHash,
-                  },
-                );
-
-                await this.sendTransactionReceipt(
-                  msg.chat.id,
-                  receipt,
-                  `₦${transaction!.airtimeAmount} Airtime purchase for ${transaction!.airtimeDataNumber} `,
-                );
-                break;
 
               case 'USDC':
-                txn = await this.walletService.transferUSDC(
-                  walletDetail.privateKey,
-                  process.env.ADMIN_WALLET!,
-                  Number(transaction!.amount),
-                );
-                console.log(txn);
-                receipt = await txn.wait();
-                console.log(receipt);
-                if (receipt.status == 1) {
-                  // buy airtime
-                  const airtime = await this.billsService.buyAirtime(
-                    `${transaction!.airtimeDataNumber}`,
-                    `${transaction!.airtimeAmount}`,
-                  );
-                  if (airtime) {
-                    //update transaction
-                    await this.TransactionModel.updateOne(
-                      { _id: transaction!._id },
-                      {
-                        flutterWave_status: airtime.status,
-                        flutterWave_reference: airtime.data.reference,
-                        flutterWave_tx_ref: airtime.data.tx_ref,
-                        flutterWave_bill_Network: airtime.data.network,
-                      },
+                if (user?.WalletType === 'SMART') {
+                  txn =
+                    await this.contractInteractionService.executeTransferErc20Transaction(
+                      walletDetail.privateKey as `0x${string}`,
+                      process.env.USDC_ADDRESS as `0x${string}`,
+                      process.env.ADMIN_WALLET as `0x${string}`,
+                      Number(transaction!.amount),
+                      6,
                     );
+                  console.log(txn);
+
+                  if (txn.success === true) {
+                    // buy airtime
+                    const airtime = await this.billsService.buyAirtime(
+                      `${transaction!.airtimeDataNumber}`,
+                      `${transaction!.airtimeAmount}`,
+                    );
+                    if (airtime) {
+                      //update transaction
+                      await this.TransactionModel.updateOne(
+                        { _id: transaction!._id },
+                        {
+                          flutterWave_status: airtime.status,
+                          flutterWave_reference: airtime.data.reference,
+                          flutterWave_tx_ref: airtime.data.tx_ref,
+                          flutterWave_bill_Network: airtime.data.network,
+                        },
+                      );
+                    }
                   }
+
+                  //update transaction
+                  await this.TransactionModel.updateOne(
+                    { _id: transaction!._id },
+                    {
+                      userOpHash: txn.userOpHash,
+                      status: txn.success === true ? 'successful' : 'failed',
+                      ownerApproved: true,
+                      hash: txn.receipt.transactionHash,
+                    },
+                  );
+
+                  await this.sendTransactionReceipt(
+                    msg.chat.id,
+                    {
+                      transactionHash: txn.receipt.transactionHash,
+                      status: txn.success === true ? 1 : 0,
+                    },
+                    `₦${transaction!.airtimeAmount} Airtime purchase for ${transaction!.airtimeDataNumber} `,
+                  );
+                  break;
+                } else {
+                  txn = await this.walletService.transferUSDC(
+                    walletDetail.privateKey,
+                    process.env.ADMIN_WALLET!,
+                    Number(transaction!.amount),
+                  );
+                  console.log(txn);
+                  receipt = await txn.wait();
+                  console.log(receipt);
+                  if (receipt.status == 1) {
+                    // buy airtime
+                    const airtime = await this.billsService.buyAirtime(
+                      `${transaction!.airtimeDataNumber}`,
+                      `${transaction!.airtimeAmount}`,
+                    );
+                    if (airtime) {
+                      //update transaction
+                      await this.TransactionModel.updateOne(
+                        { _id: transaction!._id },
+                        {
+                          flutterWave_status: airtime.status,
+                          flutterWave_reference: airtime.data.reference,
+                          flutterWave_tx_ref: airtime.data.tx_ref,
+                          flutterWave_bill_Network: airtime.data.network,
+                        },
+                      );
+                    }
+                  }
+
+                  //update transaction
+                  await this.TransactionModel.updateOne(
+                    { _id: transaction!._id },
+                    {
+                      status: receipt.status === 0 ? 'failed' : 'successful',
+                      ownerApproved: true,
+                      hash: receipt.transactionHash,
+                    },
+                  );
+
+                  await this.sendTransactionReceipt(
+                    msg.chat.id,
+                    receipt,
+                    `₦${transaction!.airtimeAmount} Airtime purchase for ${transaction!.airtimeDataNumber} `,
+                  );
+                  break;
                 }
-
-                //update transaction
-                await this.TransactionModel.updateOne(
-                  { _id: transaction!._id },
-                  {
-                    status: receipt.status === 0 ? 'failed' : 'successful',
-                    ownerApproved: true,
-                    hash: receipt.transactionHash,
-                  },
-                );
-
-                await this.sendTransactionReceipt(
-                  msg.chat.id,
-                  receipt,
-                  `₦${transaction!.airtimeAmount} Airtime purchase for ${transaction!.airtimeDataNumber} `,
-                );
-                break;
 
               case 'DAI':
-                txn = await this.walletService.transferDAI(
-                  walletDetail.privateKey,
-                  process.env.ADMIN_WALLET!,
-                  Number(transaction!.amount),
-                );
-                console.log(txn);
-                receipt = await txn.wait();
-                console.log(receipt);
-                if (receipt.status == 1) {
-                  // buy airtime
-                  const airtime = await this.billsService.buyAirtime(
-                    `${transaction!.airtimeDataNumber}`,
-                    `${transaction!.airtimeAmount}`,
-                  );
-                  if (airtime) {
-                    //update transaction
-                    await this.TransactionModel.updateOne(
-                      { _id: transaction!._id },
-                      {
-                        flutterWave_status: airtime.status,
-                        flutterWave_reference: airtime.data.reference,
-                        flutterWave_tx_ref: airtime.data.tx_ref,
-                        flutterWave_bill_Network: airtime.data.network,
-                      },
+                if (user?.WalletType === 'SMART') {
+                  txn =
+                    await this.contractInteractionService.executeTransferErc20Transaction(
+                      walletDetail.privateKey as `0x${string}`,
+                      process.env.DAI_ADDRESS as `0x${string}`,
+                      process.env.ADMIN_WALLET as `0x${string}`,
+                      Number(transaction!.amount),
+                      6,
                     );
+                  console.log(txn);
+                  console.log(receipt);
+
+                  if (txn.success === true) {
+                    // buy airtime
+                    const airtime = await this.billsService.buyAirtime(
+                      `${transaction!.airtimeDataNumber}`,
+                      `${transaction!.airtimeAmount}`,
+                    );
+                    if (airtime) {
+                      //update transaction
+                      await this.TransactionModel.updateOne(
+                        { _id: transaction!._id },
+                        {
+                          flutterWave_status: airtime.status,
+                          flutterWave_reference: airtime.data.reference,
+                          flutterWave_tx_ref: airtime.data.tx_ref,
+                          flutterWave_bill_Network: airtime.data.network,
+                        },
+                      );
+                    }
                   }
+
+                  //update transaction
+                  await this.TransactionModel.updateOne(
+                    { _id: transaction!._id },
+                    {
+                      userOpHash: txn.userOpHash,
+                      status: txn.success === true ? 'successful' : 'failed',
+                      ownerApproved: true,
+                      hash: receipt.transactionHash,
+                    },
+                  );
+
+                  await this.sendTransactionReceipt(
+                    msg.chat.id,
+                    {
+                      transactionHash: txn.receipt.transactionHash,
+                      status: txn.success === true ? 1 : 0,
+                    },
+                    `₦${transaction!.airtimeAmount} Airtime purchase for ${transaction!.airtimeDataNumber} `,
+                  );
+                  break;
+                } else {
+                  txn = await this.walletService.transferDAI(
+                    walletDetail.privateKey,
+                    process.env.ADMIN_WALLET!,
+                    Number(transaction!.amount),
+                  );
+                  console.log(txn);
+                  receipt = await txn.wait();
+                  console.log(receipt);
+                  if (receipt.status == 1) {
+                    // buy airtime
+                    const airtime = await this.billsService.buyAirtime(
+                      `${transaction!.airtimeDataNumber}`,
+                      `${transaction!.airtimeAmount}`,
+                    );
+                    if (airtime) {
+                      //update transaction
+                      await this.TransactionModel.updateOne(
+                        { _id: transaction!._id },
+                        {
+                          flutterWave_status: airtime.status,
+                          flutterWave_reference: airtime.data.reference,
+                          flutterWave_tx_ref: airtime.data.tx_ref,
+                          flutterWave_bill_Network: airtime.data.network,
+                        },
+                      );
+                    }
+                  }
+
+                  //update transaction
+                  await this.TransactionModel.updateOne(
+                    { _id: transaction!._id },
+                    {
+                      status: receipt.status === 0 ? 'failed' : 'successful',
+                      ownerApproved: true,
+                      hash: txn.receipt.transactionHash,
+                    },
+                  );
+
+                  await this.sendTransactionReceipt(
+                    msg.chat.id,
+                    receipt,
+                    `₦${transaction!.airtimeAmount} Airtime purchase for ${transaction!.airtimeDataNumber} `,
+                  );
+                  break;
                 }
-
-                //update transaction
-                await this.TransactionModel.updateOne(
-                  { _id: transaction!._id },
-                  {
-                    status: receipt.status === 0 ? 'failed' : 'successful',
-                    ownerApproved: true,
-                    hash: receipt.transactionHash,
-                  },
-                );
-
-                await this.sendTransactionReceipt(
-                  msg.chat.id,
-                  receipt,
-                  `₦${transaction!.airtimeAmount} Airtime purchase for ${transaction!.airtimeDataNumber} `,
-                );
-                break;
 
               default:
                 break;
@@ -919,13 +1233,19 @@ export class BotService {
         // detect send action
         else if (matchedSend) {
           let receiverAddress: string;
+          let receiver_chatId;
           if (matchedSend.walletType === 'ens') {
             receiverAddress = await this.getAddress(matchedSend.receiver);
           } else if (matchedSend.walletType === 'username') {
             const receiver = await this.UserModel.findOne({
               username: matchedSend.receiver,
             });
-            receiverAddress = receiver!.walletAddress;
+            receiver_chatId = receiver?.chat_id;
+            if (receiver?.WalletType === 'SMART') {
+              receiverAddress = receiver!.smartWalletAddress;
+            } else {
+              receiverAddress = receiver!.walletAddress;
+            }
           } else receiverAddress = matchedSend.receiver;
 
           // save transaction
@@ -933,12 +1253,16 @@ export class BotService {
             chat_id: msg.chat.id,
             token: matchedSend.token,
             amount: matchedSend.amount,
-            sender: user!.walletAddress,
+            sender:
+              user?.WalletType === 'SMART'
+                ? user?.smartWalletAddress
+                : user!.walletAddress,
             receiver: matchedSend.receiver,
-            type: 'SEND',
+            receiverChatId: receiver_chatId,
             ownerApproved: false,
             receiverType: matchedSend.walletType,
             receiverAddress,
+            type: 'SEND',
           });
           if (transaction) {
             return await this.sendTokenWalletPinPrompt(
@@ -974,7 +1298,10 @@ export class BotService {
             token: matchBuyAirtime.token,
             airtimeAmount: matchBuyAirtime.amount,
             amount: rateAmount,
-            sender: user!.walletAddress,
+            sender:
+              user?.WalletType === 'SMART'
+                ? user?.smartWalletAddress
+                : user!.walletAddress,
             airtimeDataNumber: matchBuyAirtime.phoneNumber,
             type: 'AIRTIME',
             ownerApproved: false,
@@ -1660,7 +1987,7 @@ export class BotService {
       );
       if (
         transaction!.token === 'ETH' &&
-        ethBalance.balance <= +transaction!.amount
+        ethBalance.balance < +transaction!.amount
       ) {
         return await this.egoBloxBot.sendMessage(
           chatId,
@@ -1668,7 +1995,7 @@ export class BotService {
         );
       } else if (
         transaction!.token === 'USDC' &&
-        usdcBalance.balance <= +transaction!.amount
+        usdcBalance.balance < +transaction!.amount
       ) {
         return await this.egoBloxBot.sendMessage(
           chatId,
@@ -1676,7 +2003,7 @@ export class BotService {
         );
       } else if (
         transaction!.token === 'DAI' &&
-        daiBalance.balance <= +transaction!.amount
+        daiBalance.balance < +transaction!.amount
       ) {
         return await this.egoBloxBot.sendMessage(
           chatId,
@@ -1728,7 +2055,7 @@ export class BotService {
       );
       if (
         transaction!.token === 'ETH' &&
-        ethBalance.balance <= +transaction!.amount
+        ethBalance.balance < +transaction!.amount
       ) {
         return await this.egoBloxBot.sendMessage(
           chatId,
@@ -1736,7 +2063,7 @@ export class BotService {
         );
       } else if (
         transaction!.token === 'USDC' &&
-        usdcBalance.balance <= +transaction!.amount
+        usdcBalance.balance < +transaction!.amount
       ) {
         return await this.egoBloxBot.sendMessage(
           chatId,
@@ -1744,7 +2071,7 @@ export class BotService {
         );
       } else if (
         transaction!.token === 'DAI' &&
-        daiBalance.balance <= +transaction!.amount
+        daiBalance.balance < +transaction!.amount
       ) {
         return await this.egoBloxBot.sendMessage(
           chatId,
@@ -1804,6 +2131,30 @@ export class BotService {
   ) => {
     try {
       const receipt = await transactionReceiptMarkup(
+        transactionReceipt,
+        description,
+      );
+      if (receipt) {
+        const replyMarkup = {
+          inline_keyboard: receipt.keyboard,
+        };
+        await this.egoBloxBot.sendMessage(chatId, receipt.message, {
+          parse_mode: 'HTML',
+          reply_markup: replyMarkup,
+        });
+      }
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
+  notifyReceiver = async (
+    chatId: any,
+    transactionReceipt: any,
+    description?: any,
+  ) => {
+    try {
+      const receipt = await notifyReceiverMarkup(
         transactionReceipt,
         description,
       );

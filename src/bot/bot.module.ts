@@ -10,7 +10,7 @@ import {
 import { Session, SessionSchema } from 'src/database/schemas/session.schema';
 import { WalletModule } from 'src/wallet/wallet.module';
 import { BillsModule } from 'src/bills/bills.module';
-import { ContractInteractionModule } from 'src/contract-interaction/contract-interaction.module';
+import { ContractInteractionModule } from 'src/paymaster-contract-interaction/contract-interaction.module';
 
 @Module({
   imports: [
