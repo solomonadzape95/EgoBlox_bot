@@ -6,7 +6,7 @@ import {
   toCoinbaseSmartAccount,
 } from 'viem/account-abstraction';
 import { http, createPublicClient } from 'viem';
-import { baseSepolia } from 'viem/chains';
+import { base, baseSepolia } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
 import * as dotenv from 'dotenv';
 dotenv.config();
@@ -21,8 +21,10 @@ const EGOBLOX_ADDRESS =
     ? process.env.EGOBLOX_ADDRESS_TESTNET
     : process.env.EGOBLOX_ADDRESS_MAINNET;
 
+const chain = process.env.ENVIRONMENT === 'TESTNET' ? baseSepolia : base;
+
 const publicClient = createPublicClient({
-  chain: baseSepolia,
+  chain: chain,
   transport: http(RPC_URL),
 });
 
@@ -50,7 +52,7 @@ export class ContractInteractionService {
       account: userAccount,
       client: publicClient,
       transport: http(RPC_URL),
-      chain: baseSepolia,
+      chain: chain,
     });
   }
 
