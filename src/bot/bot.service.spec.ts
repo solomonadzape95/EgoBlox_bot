@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 import { Test, TestingModule } from '@nestjs/testing';
 import { BotService } from './bot.service';
 
@@ -8,7 +9,6 @@ describe('BotService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [BotService],
     }).compile();
-
     service = module.get<BotService>(BotService);
   });
 

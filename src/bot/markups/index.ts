@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 import { allFeaturesMarkup } from './features';
 import { welcomeMessageMarkup } from './welcome';
 import { wallerDetailsMarkup } from './walletDetails';

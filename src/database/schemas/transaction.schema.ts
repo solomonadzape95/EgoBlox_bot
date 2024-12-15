@@ -61,8 +61,17 @@ export class Transaction {
   @Prop()
   sender: string;
 
-  @Prop({ type: mongoose.Schema.Types.BigInt, ref: 'User' })
-  chat_id: bigint;
+  @Prop({ type: Number, ref: 'User' })
+  chat_id: number;
+
+  @Prop({ default: false })
+  isGroupTransaction: boolean;
+
+  @Prop([String])
+  approvedBy: string[];
+
+  @Prop()
+  requiredApprovals: number;
 }
 
 export const TransactionSchema = SchemaFactory.createForClass(Transaction);

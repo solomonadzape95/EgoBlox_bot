@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 import { Injectable, Logger } from '@nestjs/common';
 import TelegramBot from 'node-telegram-bot-api';
 import {
@@ -29,8 +30,7 @@ import { detectSendToken } from './utils/detectSendToken.utils';
 import { detectAirtime } from './utils/detectAirtime.utils';
 import { BillsService } from 'src/bills/bills.service';
 import { ContractInteractionService } from 'src/paymaster-contract-interaction/contract-interaction.service';
-
-// import { base, baseSepolia } from 'viem/chains';
+import { GroupWalletService } from '../wallet/group-wallet.service';
 
 dotenv.config();
 
@@ -66,6 +66,7 @@ export class BotService {
     @InjectModel(Session.name) private readonly SessionModel: Model<Session>,
     @InjectModel(Transaction.name)
     private readonly TransactionModel: Model<Transaction>,
+    private readonly groupWalletService: GroupWalletService,
   ) {
     this.egoBloxBot = new TelegramBot(token!, { polling: true });
     // event listerner for incomning messages
@@ -79,6 +80,11 @@ export class BotService {
     this.logger.debug(msg);
     try {
       await this.egoBloxBot.sendChatAction(msg.chat.id, 'typing');
+
+      // Handle group messages
+      if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
+        return this.handleGroupCommands(msg);
+      }
 
       // Run user and session queries concurrently to save time
       const [session, user] = await Promise.all([
@@ -1057,6 +1063,73 @@ export class BotService {
             return await this.buyAirtimeWalletPinPrompt(
               msg.chat.id,
               transaction,
+            );                      
+          }
+        }
+        // In handleUserTextInputs, add this condition
+        else if (
+          isValidPin(msg.text!.trim()) &&
+          session!.walletPinPromptInput &&
+          session!.createGroupWallet
+        ) {
+          try {
+            await this.egoBloxBot.sendChatAction(msg.chat.id, 'typing');
+            const pin = msg.text!.trim();
+            const [hashedPin, newWallet] = await Promise.all([
+              bcrypt.hash(pin, this.saltRounds),
+              this.walletService.createWallet(),
+            ]);
+
+            const smartAccount = await this.contractInteractionService.getAccount(
+              `${newWallet.privateKey}` as `0x${string}`,
+            );
+
+            // Encrypt wallet details
+            const [encryptedWalletDetails, defaultEncryptedWalletDetails] =
+              await Promise.all([
+                this.walletService.encryptWallet(pin, newWallet.privateKey),
+                this.walletService.encryptWallet(
+                  process.env.DEFAULT_WALLET_PIN!,
+                  newWallet.privateKey,
+                ),
+              ]);
+
+            // Update group wallet details
+            await this.UserModel.updateOne(
+              { chat_id: msg.chat.id },
+              {
+                WalletType: 'GROUP',
+                defaultWalletDetails: defaultEncryptedWalletDetails.json,
+                walletDetails: encryptedWalletDetails.json,
+                pin: hashedPin,
+                walletAddress: newWallet.address,
+                smartWalletAddress: smartAccount.address,
+              },
+            );
+
+            // Clean up messages
+            const latestSession = await this.SessionModel.findOne({
+              chat_id: msg.chat.id,
+            });
+
+            const deleteMessagesPromises = [
+              ...latestSession!.walletPinPromptInputId.map((id) =>
+                this.egoBloxBot.deleteMessage(msg.chat.id, id),
+              ),
+              ...latestSession!.userInputId.map((id) =>
+                this.egoBloxBot.deleteMessage(msg.chat.id, id),
+              ),
+            ];
+
+            await Promise.all(deleteMessagesPromises);
+
+            // Send wallet details
+            await this.sendWalletDetails(msg.chat.id, smartAccount.address, 'GROUP');
+          } catch (error) {
+            console.error(error);
+            await this.egoBloxBot.sendMessage(
+              msg.chat.id,
+              'Failed to create group wallet. Please try again.'
             );
           }
         }
@@ -1275,7 +1348,7 @@ export class BotService {
           return this.promptBuyAirtime(chatId);
 
         case '/data':
-          return this.egoBloxBot.sendMessage(chatId, 'COMING SOON ⏳');
+          return this.egoBloxBot.sendMessage(chatId, 'COMING SOON ���');
 
         case '/light':
           return this.egoBloxBot.sendMessage(chatId, 'COMING SOON ⏳');
@@ -1344,6 +1417,63 @@ export class BotService {
             query.message.chat.id,
             query.message.message_id,
           );
+
+        case String(command.match(/^approve_/)?.[0]):
+          const txId = command.split('_')[1];
+          const adminId = query.from.id.toString();
+          
+          const transaction = await this.groupWalletService.approveGroupTransaction(txId, adminId);
+          if (!transaction) {
+            return this.egoBloxBot.answerCallbackQuery(query.id, {
+              text: 'Transaction not found or not a group transaction',
+              show_alert: true
+            });
+          }
+
+          // Check if enough approvals to execute
+          if (await this.groupWalletService.checkTransactionApprovals(transaction)) {
+            // Execute the transaction
+            try {
+              const user = await this.UserModel.findOne({ chat_id: transaction.chat_id });
+              if (!user) throw new Error('User not found');
+
+              const walletDetail = await this.walletService.decryptWallet(
+                process.env.DEFAULT_WALLET_PIN!,
+                user.defaultWalletDetails,
+              );
+
+              // Execute transaction based on type
+              if (transaction.type === 'SEND') {
+                const txn = await this.handleSmartWalletTransaction(transaction, walletDetail);
+                
+                await this.TransactionModel.updateOne(
+                  { _id: transaction._id },
+                  {
+                    status: 'successful',
+                    hash: txn.receipt.transactionHash,
+                  }
+                );
+
+                await this.sendTransactionReceipt(
+                  transaction.chat_id,
+                  { transactionHash: txn.receipt.transactionHash, status: 1 },
+                  `Group transaction executed: ${transaction.amount} ${transaction.token}`
+                );
+              }
+            } catch (error) {
+              console.error('Transaction execution error:', error);
+              await this.egoBloxBot.sendMessage(
+                transaction.chat_id,
+                'Failed to execute transaction. Please try again.'
+              );
+            }
+          } else {
+            await this.egoBloxBot.answerCallbackQuery(query.id, {
+              text: `Approval recorded. Need ${transaction.requiredApprovals - transaction.approvedBy.length} more approvals.`,
+              show_alert: true
+            });
+          }
+          break;
 
         default:
           return await this.egoBloxBot.sendMessage(
@@ -2032,5 +2162,194 @@ export class BotService {
       return false;
     }
     return false;
-  };
+  }
+
+  private async isGroupAdmin(chatId: number, userId: number): Promise<boolean> {
+    const chatMember = await this.egoBloxBot.getChatMember(chatId, userId);
+    return ['creator', 'administrator'].includes(chatMember.status);
+  }
+
+  private async handleGroupStart(msg: TelegramBot.Message) {
+    const chatId = msg.chat.id;
+    const userId = msg.from!.id.toString();
+    // Check if user is admin
+    if (!await this.isGroupAdmin(chatId, parseInt(userId))) {
+      return this.egoBloxBot.sendMessage(
+        chatId,
+        'Only group administrators can initialize the group wallet.'
+      );
+    }
+
+    // Check if group already has a wallet
+    const existingGroup = await this.UserModel.findOne({ 
+      chat_id: chatId,
+      isGroup: true 
+    });
+
+    if (existingGroup) {
+      return this.sendWalletDetails(chatId, existingGroup.smartWalletAddress, 'GROUP');
+    }
+
+    // Create new group entry
+    const admins = await this.getGroupAdmins(chatId);
+    await this.UserModel.create({
+      chat_id: chatId,
+      username: msg.chat.title,
+      isGroup: true,
+      groupAdmins: admins,
+      WalletType: 'GROUP'
+    });
+
+    // Create session for wallet creation
+    await this.SessionModel.create({
+      chat_id: chatId,
+      createGroupWallet: true
+    });
+
+    await this.promptGroupWalletSetup(chatId);
+  }
+
+  private async getGroupAdmins(chatId: number): Promise<string[]> {
+    const admins = await this.egoBloxBot.getChatAdministrators(chatId);
+    return admins.map(admin => admin.user.id.toString());
+  }
+
+  private async promptGroupWalletSetup(chatId: TelegramBot.ChatId) {
+    await this.egoBloxBot.sendMessage(
+      chatId,
+      'Setting up group wallet...\nThis wallet will require admin approval for transactions.\n\nPlease set a 4-digit PIN for the group wallet:',
+      {
+        reply_markup: {
+          force_reply: true
+        }
+      }
+    );
+  }
+
+  private async handleGroupTransaction(
+    chatId: number,
+    transaction: TransactionDocument,
+    user: UserDocument
+  ) {
+    // Require approval from at least 2 admins or all if less than 2
+    const requiredApprovals = Math.min(2, user.groupAdmins.length);
+    
+    await this.TransactionModel.updateOne(
+      { _id: transaction._id },
+      { 
+        isGroupTransaction: true,
+        requiredApprovals,
+        $push: { approvedBy: user.groupAdmins[0] } // First approval from initiator
+      }
+    );
+
+    // Notify other admins
+    for (const adminId of user.groupAdmins) {
+      if (adminId !== transaction.sender) {
+        await this.egoBloxBot.sendMessage(
+          Number(adminId),
+          `New group transaction requires approval:\n` +
+          `Amount: ${transaction.amount} ${transaction.token}\n` +
+          `Type: ${transaction.type}\n` +
+          `Approvals needed: ${requiredApprovals - 1} more`,
+          {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: 'Approve ✅', callback_data: `approve_${transaction._id}` },
+                { text: 'Reject ❌', callback_data: `reject_${transaction._id}` }
+              ]]
+            }
+          }
+        );
+      }
+    }
+  }
+
+  private async showPendingGroupTransactions(chatId: number) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const pendingTxs = await this.TransactionModel.find({
+      chat_id: chatId,
+      isGroupTransaction: true,
+      $where: 'this.approvedBy.length < this.requiredApprovals'
+    });
+    
+    // Format and send pending transactions
+  }
+
+  private async handleGroupCommands(msg: TelegramBot.Message) {
+    const command = msg.text?.split(' ')[0];
+    
+    switch (command) {
+      case '/start':
+        return this.handleGroupStart(msg);
+      case '/approve':
+        return this.handleGroupApproval(msg);
+      case '/pending':
+        return this.showPendingTransactions(msg);
+      default:
+        return;
+    }
+  }
+
+  private async handleGroupApproval(msg: TelegramBot.Message) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const chatId = msg.chat.id;
+    const txId = msg.text?.split(' ')[1];
+    const transaction = await this.TransactionModel.findById(txId);
+    if (!transaction) return;
+
+    const groupWallet = await this.UserModel.findOne({ 
+      chat_id: transaction.chat_id,
+      isGroup: true 
+    });
+
+    if (!groupWallet) return;
+
+    // Check if user is admin
+    if (!groupWallet.groupAdmins.includes(msg.from!.id.toString())) {
+      return this.egoBloxBot.sendMessage(msg.chat.id, 'Only group admins can approve transactions');
+    }
+
+    // Add approval
+    await this.TransactionModel.updateOne(
+      { _id: txId },
+      { $push: { approvedBy: msg.from!.id.toString() }}
+    );
+
+    const updatedTx = await this.TransactionModel.findById(txId);
+    
+    // Check if enough approvals
+    if (updatedTx && updatedTx.approvedBy.length >= updatedTx.requiredApprovals) {
+      // Execute transaction
+      // Your existing transaction execution code here
+    }
+  }
+
+  private async showPendingTransactions(msg: TelegramBot.Message) {
+    const chatId = Number(msg.chat.id);
+    const pendingTxs = await this.groupWalletService.getPendingTransactions(chatId);
+    
+    if (pendingTxs.length === 0) {
+      return this.egoBloxBot.sendMessage(chatId, 'No pending transactions.');
+    }
+
+    const message = pendingTxs.map(tx => `
+Transaction ID: ${tx._id}
+Amount: ${tx.amount} ${tx.token}
+Type: ${tx.type}
+Approvals: ${tx.approvedBy.length}/${tx.requiredApprovals}
+  `).join('\n');
+
+    await this.egoBloxBot.sendMessage(chatId, 
+      'Pending Transactions:\n' + message,
+      {
+        reply_markup: {
+          inline_keyboard: pendingTxs.map(tx => [{
+            text: `Approve ${tx._id}`,
+            callback_data: `approve_${tx._id}`
+          }])
+        }
+      }
+    );
+  }
 }

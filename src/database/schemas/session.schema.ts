@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import * as mongoose from 'mongoose';
 
@@ -5,8 +6,8 @@ export type SessionDocument = mongoose.HydratedDocument<Session>;
 
 @Schema()
 export class Session {
-  @Prop({ type: mongoose.Schema.Types.BigInt, ref: 'User' })
-  chat_id: bigint;
+  @Prop({ type: Number, ref: 'User' })
+  chat_id: number;
 
   @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'User' })
   user: mongoose.Types.ObjectId;
@@ -61,6 +62,15 @@ export class Session {
 
   @Prop()
   transactionId: string;
+
+  @Prop({ default: false })
+  createGroupWallet: boolean;
+
+  @Prop({ default: false })
+  pendingGroupApproval: boolean;
+
+  @Prop()
+  groupTransactionId: string;
 }
 
 export const SessionSchema = SchemaFactory.createForClass(Session);
